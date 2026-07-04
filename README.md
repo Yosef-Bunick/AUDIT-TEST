@@ -1,4 +1,4 @@
-# audit-code
+# audit-test
 
 **One command. One policy. One report. One fail-closed verdict.**
 
@@ -9,50 +9,55 @@ break anything?**
 ## Install
 
 ```powershell
-pip install audit-code
+pip install audit-test
+```
+
+Three CLI commands available after install (all identical):
+
+```powershell
+audit-test --high
+audit-test --high
+audit-code --high
 ```
 
 Or from source:
 
 ```powershell
-git clone https://github.com/Yosef-Bunick/AUDIT_TESTING_TESTS-CODE.git
-cd AUDIT_TESTING_TESTS-CODE
+git clone https://github.com/Yosef-Bunick/AUDIT-TEST.git
+cd AUDIT-TEST
 pip install -e .
 ```
 
 ## Usage
 
 ```powershell
-audit-code                    # full audit on current directory
-audit-code --min              # fast: wiring + phd + quality (seconds)
-audit-code --full             # complete: all checks + raw output
-audit-code --fix              # auto-format: black + ruff --fix (~1s)
-audit-code --path <dir>       # audit a specific project
-audit-code --report-only      # print findings, always exit 0
-audit-code --json results.json   # write JSON report
-audit-code --sarif results.sarif # write SARIF (GitHub code scanning)
-audit-code --junit results.xml   # write JUnit (CI dashboards)
-audit-code --profile agent-engine  # enable Agent Engine profile
-audit-code --config audit-code.toml  # use custom config file
-audit-code --help             # show all options
+audit-test                    # full audit on current directory
+audit-test --min              # fast: wiring + phd + quality (seconds)
+audit-test --full             # complete: all checks + raw output
+audit-test --fix              # auto-format: black + ruff --fix (~1s)
+audit-test --path <dir>       # audit a specific project
+audit-test --report-only      # print findings, always exit 0
+audit-test --json results.json   # write JSON report
+audit-test --sarif results.sarif # write SARIF (GitHub code scanning)
+audit-test --junit results.xml   # write JUnit (CI dashboards)
+audit-test --profile agent-engine  # enable Agent Engine profile
+audit-test --help             # show all options
 ```
-
-Aliases: `audit-test` and `audit-tests` work identically to `audit-code`.
 
 ### Severity filtering
 
 ```powershell
-audit-code --high             # only HIGH severity (default)
-audit-code --medium           # HIGH + MEDIUM severity
-audit-code --info             # HIGH + MEDIUM + INFO
-audit-code --all              # all findings (same as --info)
+audit-test --high             # only HIGH severity (default)
+audit-test --medium           # HIGH + MEDIUM severity
+audit-test --info             # HIGH + MEDIUM + INFO
+audit-test --all              # all findings (same as --info)
 ```
 
 ### Verbosity
 
 ```powershell
-audit-code --verbose          # full detail output for every audit step
-audit-code --phd --high -v    # PHD only, HIGH only, full detail
+audit-test --verbose          # full detail output for every audit step
+audit-test --phd --high -v    # PHD only, HIGH only, full detail
 ```
 
 ### Per-module selection
@@ -60,29 +65,29 @@ audit-code --phd --high -v    # PHD only, HIGH only, full detail
 Any combination works:
 
 ```powershell
-audit-code --phd              # PHD static audit only
-audit-code --wiring           # wiring audit only
-audit-code --runtime          # runtime audit only
-audit-code --suite            # test suite audit only
-audit-code --quality          # quality gates only
-audit-code --python           # Python syntax check only
-audit-code --syntax           # all language syntax checks
-audit-code --tests            # non-Python test suites
-audit-code --lint             # ruff check only
-audit-code --lint --fix       # ruff --fix only
-audit-code --black            # black --check only
-audit-code --black --fix      # black format only
-audit-code --phd --wiring --medium   # PHD + wiring, HIGH+MEDIUM
-audit-code --suite --quality         # test suite + quality gates
+audit-test --phd              # PHD static audit only
+audit-test --wiring           # wiring audit only
+audit-test --runtime          # runtime audit only
+audit-test --suite            # test suite audit only
+audit-test --quality          # quality gates only
+audit-test --python           # Python syntax check only
+audit-test --syntax           # all language syntax checks
+audit-test --tests            # non-Python test suites
+audit-test --lint             # ruff check only
+audit-test --lint --fix       # ruff --fix only
+audit-test --black            # black --check only
+audit-test --black --fix      # black format only
+audit-test --phd --wiring --medium   # PHD + wiring, HIGH+MEDIUM
+audit-test --suite --quality         # test suite + quality gates
 ```
 
 ### Change gate
 
 ```powershell
-audit-code gate               # judge working-tree diff vs HEAD
-audit-code gate --fast        # skip mutation (G4)
-audit-code gate --kill 80     # raise mutation bar (default 60%)
-audit-code gate --path <dir>  # gate a specific project
+audit-test gate               # judge working-tree diff vs HEAD
+audit-test gate --fast        # skip mutation (G4)
+audit-test gate --kill 80     # raise mutation bar (default 60%)
+audit-test gate --path <dir>  # gate a specific project
 ```
 
 ### Standalone scripts
@@ -152,7 +157,7 @@ supports `--min-severity=HIGH` when run standalone.
 
 ## The gate
 
-`audit-code gate` judges **only your working-tree diff vs HEAD**, inside a
+`audit-test gate` judges **only your working-tree diff vs HEAD**, inside a
 disposable git worktree:
 
 - **G0** syntax — changed files must parse
