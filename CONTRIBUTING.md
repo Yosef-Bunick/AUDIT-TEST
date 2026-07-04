@@ -36,11 +36,12 @@ audit-test v
    cd AUDIT-TEST               # cd to your clone
                                # use current version to test your new version
    audit-test fix              # format + lint-fix
-   audit-test s q              # must pass all (no WARN allowed)
+   audit-test --skip quality    # must pass all (no WARN allowed)
    audit-test q v              # quality verbose — only Q5/Q6 may WARN
    ```
 4. If a finding is intentional and necessary, suppress it with `# audit: ok` on the exact line and explain why in the commit message
-5. Open a PR
+5. By submitting a PR, you agree that your contribution is licensed under CC BY-NC-ND 4.0
+6. Open a PR
 
 ## How It Works
 
