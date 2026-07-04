@@ -53,9 +53,11 @@ def _is_gate_mode() -> bool:
 
 def build_audit_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="audit-code",
+        prog="audit-test",
         description="Code and test verification orchestrator.",
+        add_help=False,
     )
+    parser.add_argument("-H", "--help", action="help", help="show this help message and exit")
     parser.add_argument(
         "--path",
         "-p",
@@ -68,7 +70,8 @@ def build_audit_parser() -> argparse.ArgumentParser:
         help="Fast local checks: wiring + phd + quality",
     )
     parser.add_argument(
-        "-F", "--full",
+        "-F",
+        "--full",
         action="store_true",
         help="Complete analysis: all checks + full raw output",
     )
@@ -84,7 +87,8 @@ def build_audit_parser() -> argparse.ArgumentParser:
         help="Print findings but always exit 0",
     )
     parser.add_argument(
-        "-f", "--fix",
+        "-f",
+        "--fix",
         action="store_true",
         help="Auto-format: run black + ruff --fix (modifies files)",
     )
@@ -121,8 +125,12 @@ def build_audit_parser() -> argparse.ArgumentParser:
 
     # --- severity level (mutually exclusive) ---
     sev = parser.add_mutually_exclusive_group()
-    sev.add_argument("-H", "--high", action="store_true", help="Only HIGH severity (default)")
-    sev.add_argument("-m", "--medium", action="store_true", help="HIGH + MEDIUM severity")
+    sev.add_argument(
+        "-h", "--high", action="store_true", help="Only HIGH severity (default)"
+    )
+    sev.add_argument(
+        "-m", "--medium", action="store_true", help="HIGH + MEDIUM severity"
+    )
     sev.add_argument("--info", action="store_true", help="HIGH + MEDIUM + INFO")
     sev.add_argument("--all", action="store_true", help="All findings (same as --info)")
 
@@ -151,6 +159,13 @@ def build_audit_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--lint", action="store_true", help="Run ruff lint only")
     parser.add_argument("--black", action="store_true", help="Run black format only")
+    parser.add_argument(
+        "-s",
+        "--skip",
+        default="",
+        metavar="MODULES",
+        help="Skip specific modules (comma-separated: phd,suite,quality)",
+    )
 
     return parser
 
@@ -198,11 +213,25 @@ def _resolve_modules(args: argparse.Namespace) -> set[str] | None:
     """Return the set of modules selected, or None for all (mode logic).
 
     --fix with no module flags defaults to quality-only.
+    --skip removes modules from the default set.
     """
     selected = {m for m in ALL_MODULES if getattr(args, m, False)}
     if not selected and args.fix:
         return {"quality"}
-    return selected if selected else None
+    if selected:
+        return selected
+    if args.skip:
+        import re
+        skip_set = {s.strip() for s in re.split(r"[, ]+", args.skip) if s.strip()}
+        result = ALL_MODULES - skip_set
+        # --min further restricts: skip runtime + suite (slow checks)
+        if args.min:
+            slow = {"runtime", "suite", "tests", "lint"}
+            result -= slow
+        return result
+    if args.min:
+        return {"syntax", "wiring", "phd", "quality"}
+    return None  # all modules
 
 
 def run_audit(args: argparse.Namespace) -> int:
@@ -269,9 +298,35 @@ def main():
         args = parser.parse_args()
         sys.exit(run_gate_cmd(args))
     else:
+        _expand_bare_words()
         parser = build_audit_parser()
         args = parser.parse_args()
         sys.exit(run_audit(args))
+
+
+def _expand_bare_words() -> None:
+    """Convert bare words like 'phd high fix' into '--phd --high --fix'."""
+    WORD_MAP = {
+        # modules
+        "syntax": "--syntax", "python": "--python",
+        "wiring": "--wiring", "phd": "--phd",
+        "runtime": "--runtime", "suite": "--suite",
+        "quality": "--quality", "tests": "--tests",
+        "lint": "--lint", "black": "--black",
+        # severity
+        "high": "--high", "medium": "--medium", "info": "--info", "all": "--all",
+        # modes
+        "fix": "--fix", "full": "--full", "min": "--min",
+        "verbose": "--verbose", "strict": "--strict",
+        "report": "--report-only",
+    }
+    new_argv = [sys.argv[0]]
+    for arg in sys.argv[1:]:
+        if arg.startswith("-") or arg == "gate":
+            new_argv.append(arg)
+        else:
+            new_argv.append(WORD_MAP.get(arg.lower(), arg))
+    sys.argv = new_argv
 
 
 if __name__ == "__main__":

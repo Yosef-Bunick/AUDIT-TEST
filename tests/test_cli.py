@@ -45,6 +45,7 @@ def _args(**overrides) -> argparse.Namespace:
         "python": False,
         "lint": False,
         "black": False,
+        "skip": "",
     }
     base.update(overrides)
     return argparse.Namespace(**base)

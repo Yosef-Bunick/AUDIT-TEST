@@ -15,9 +15,9 @@ pip install audit-test
 Three CLI commands available after install (all identical):
 
 ```powershell
-audit-test --high
-audit-test --high
-audit-code --high
+audit-test high
+audit-test high
+audit-code high
 ```
 
 Or from source:
@@ -30,64 +30,61 @@ pip install -e .
 
 ## Usage
 
+Bare words or flags — both work:
+
 ```powershell
-audit-test                    # full audit on current directory
-audit-test --min              # fast: wiring + phd + quality (seconds)
-audit-test -F                 # complete: all checks + raw output
-audit-test -f                 # auto-format: black + ruff --fix (~1s)
+audit-test                    # full audit
+audit-test min                # fast: wiring + phd + quality
+audit-test full               # complete: all checks + raw output
+audit-test fix                # auto-format (~1s)
+audit-test phd high           # PHD only, HIGH only
+audit-test phd wiring medium  # PHD + wiring, HIGH+MEDIUM
 audit-test -p <dir>           # audit a specific project
-audit-test --report-only      # print findings, always exit 0
-audit-test --json results.json   # write JSON report
-audit-test --sarif results.sarif # write SARIF (GitHub code scanning)
-audit-test --junit results.xml   # write JUnit (CI dashboards)
-audit-test --profile agent-engine  # enable Agent Engine profile
-audit-test -h                 # show all options
+audit-test -s "suite lint"    # skip suite + lint
 ```
 
-### Severity filtering
+### Flags quick reference
+
+| Short | Long | Does |
+|---|---|---|
+| `-h` | `--high` | HIGH severity only (default) |
+| `-m` | `--medium` | HIGH + MEDIUM severity |
+| | `--info` | HIGH + MEDIUM + INFO |
+| | `--all` | all findings |
+| `-v` | `--verbose` | full detail output |
+| `-f` | `--fix` | auto-format |
+| `-F` | `--full` | complete analysis |
+| `-p` | `--path` | project directory |
+| `-s` | `--skip` | skip modules (comma/space) |
+| `-H` | `--help` | show help |
+
+### Modules
+
+Any combination, bare words or `--flag`:
 
 ```powershell
-audit-test -H                 # only HIGH severity (default)
-audit-test -m                 # HIGH + MEDIUM severity
-audit-test --info             # HIGH + MEDIUM + INFO
-audit-test --all              # all findings (same as --info)
-```
-
-### Verbosity
-
-```powershell
-audit-test -v                 # full detail output for every audit step
-audit-test --phd -H -v        # PHD only, HIGH only, full detail
-```
-
-### Per-module selection
-
-Any combination works:
-
-```powershell
-audit-test --phd              # PHD static audit only
-audit-test --wiring           # wiring audit only
-audit-test --runtime          # runtime audit only
-audit-test --suite            # test suite audit only
-audit-test --quality          # quality gates only
-audit-test --python           # Python syntax check only
-audit-test --syntax           # all language syntax checks
-audit-test --tests            # non-Python test suites
-audit-test --lint             # ruff check only
-audit-test --lint --fix       # ruff --fix only
-audit-test --black            # black --check only
-audit-test --black --fix      # black format only
-audit-test --phd --wiring --medium   # PHD + wiring, HIGH+MEDIUM
-audit-test --suite --quality         # test suite + quality gates
+audit-test phd                # PHD static audit
+audit-test wiring             # wiring audit
+audit-test runtime            # runtime audit
+audit-test suite              # test suite audit
+audit-test quality            # quality gates
+audit-test syntax             # all language syntax checks
+audit-test python             # Python syntax only
+audit-test tests              # non-Python test suites
+audit-test lint               # ruff check
+audit-test black              # black format
+audit-test lint fix           # ruff --fix
+audit-test black fix          # black format
+audit-test phd wiring medium  # mix any modules + severity
 ```
 
 ### Change gate
 
 ```powershell
 audit-test gate               # judge working-tree diff vs HEAD
-audit-test gate -H            # block on new HIGH findings (default)
-audit-test gate -m            # block on new HIGH+MEDIUM
-audit-test gate --fast        # skip mutation (G4)
+audit-test gate high           # block on new HIGH findings (default)
+audit-test gate medium         # block on new HIGH+MEDIUM
+audit-test gate fast           # skip mutation (G4)
 audit-test gate -p <dir>      # gate a specific project
 ```
 
