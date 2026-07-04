@@ -44,6 +44,12 @@
   - [x] `tests/test_runner.py` — JSON report carries per-language adapter findings (id/status/file/line/severity/language)
   - [x] `tests/test_runner.py` — cp1252 Windows console: `_force_utf8_output()` makes ✓/✗ glyphs printable
   - [x] `tests/test_runner.py` — wiring heuristic: framework callbacks (external base class, e.g. `HTMLParser.handle_*`) are wired, private/local-base methods stay eligible for dead-symbol flagging
+  - [x] `tests/test_runner.py` — profile wiring: `--profile agent-engine` adds its row; an unknown profile fails closed with an ERROR row
+  - [x] `tests/test_cli.py` — CLI exit codes (broken ⇒ 1, clean ⇒ 0, `--report-only` ⇒ 0), `--json/--sarif/--junit` write files, `[reporting]` toml defaults used when flags absent (flag wins), gate-mode argv detection (with the documented `--path gate` quirk as xfail), `find_target_root` exits 2 on missing/non-dir paths
+  - [x] `tests/test_config.py` — config contract: defaults without toml, deep merge preserving sibling/untouched keys, malformed toml falls back (never crashes), explicit `--config` path wins, loads are isolated deep copies; `AuditResult` severity counting + `is_failure` truth table
+  - [x] `tests/test_reporting.py` — SARIF severity mapping (HIGH→error/MEDIUM→warning/INFO→note), forward-slash URIs, region lines, no bogus locations; JUnit XML parses with correct failure/skip counts, `<failure>` only on HIGH/MEDIUM
+  - [x] `tests/test_base.py` — `run_tool` never raises (timeout ⇒ -1 and actually kills, unlaunchable ⇒ -2), source walk prunes build dirs (`node_modules`/`target`/`bin`/`obj`/`vendor`) while including root-level files, `TimeBudget`, `rel()` outside-root fallback, `quality._tool` prefers `python -m` for installed packages and returns None when missing everywhere
+  - [x] `tests/test_base.py` — quality audit on a project WITH a `tests/` dir: Q7 hygiene walk runs without crashing and flags `time.sleep()` + reason-less `skip()` (regression guard — a `NameError` in that loop was invisible to projects without `tests/` and was caught by the self-audit, not the suite)
 
 ---
 

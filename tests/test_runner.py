@@ -163,6 +163,34 @@ def test_force_utf8_output_makes_status_glyphs_printable(monkeypatch):
     assert "✓".encode("utf-8") in buf.getvalue()
 
 
+# ── profile wiring ──
+
+
+def test_profiles_load_known_and_unknown():
+    from audit_code.profiles import load
+
+    assert callable(load("agent-engine"))
+    assert load("nope") is None
+
+
+def test_run_suite_with_known_profile_adds_row(tmp_path, capsys):
+    (tmp_path / "index.html").write_text("<p>hi</p>", encoding="utf-8")
+    results = runner.run_suite(tmp_path, mode="min", profile="agent-engine")
+    by_id = {r.audit_id: r for r in results}
+    assert "profile-agent-engine" in by_id
+    assert not by_id["profile-agent-engine"].is_failure
+
+
+def test_run_suite_with_unknown_profile_fails_closed(tmp_path, capsys):
+    """A typo'd --profile must surface as an ERROR row, not vanish."""
+    (tmp_path / "index.html").write_text("<p>hi</p>", encoding="utf-8")
+    results = runner.run_suite(tmp_path, mode="min", profile="bogus")
+    by_id = {r.audit_id: r for r in results}
+    assert by_id["profile-bogus"].status == AuditStatus.ERROR
+    assert by_id["profile-bogus"].is_failure
+    assert any(r.is_failure for r in results)
+
+
 # ── wiring: framework callbacks are not dead symbols ──
 
 

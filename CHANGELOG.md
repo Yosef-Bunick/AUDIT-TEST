@@ -27,7 +27,16 @@
 - Standalone script support (copy into any project, run directly)
 - pip-installable via `pip install -e .`
 
+### Added
+- Verification test suite (41 tests across 5 files): CLI exit codes, config contract,
+  SARIF/JUnit output shape, adapter plumbing (run_tool, source walk, TimeBudget),
+  and profile wiring — encoding every manual check run after changes
+- Q7 regression guard: quality audit against project with `tests/` dir catches
+  hygiene-loop crashes invisible to projects without one
+
 ### Fixed
+- Quality Q7 hygiene loop `NameError` (`py_file` undefined in loop using `p`) —
+  triggered only when `tests/` exists in the target project
 - Language detection missed source files at the project root (only
   subdirectories were scanned); Python detection stopped at the first
   non-venv directory regardless of match
