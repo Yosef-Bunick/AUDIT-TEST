@@ -321,6 +321,14 @@ def _expand_bare_words() -> None:
         "tests": "--tests",
         "lint": "--lint",
         "black": "--black",
+        # module shortcuts
+        "q": "--quality",
+        "w": "--wiring",
+        "p": "--phd",
+        "r": "--runtime",
+        "l": "--lint",
+        "b": "--black",
+        "s": "--suite",
         # severity
         "high": "--high",
         "medium": "--medium",
@@ -341,11 +349,28 @@ def _expand_bare_words() -> None:
         "F": "--full",
     }
     new_argv = [sys.argv[0]]
+    prev_was_value_flag = False
+    value_flags = {
+        "--path",
+        "-p",
+        "--skip",
+        "-s",
+        "--json",
+        "--sarif",
+        "--junit",
+        "--profile",
+        "--config",
+    }
     for arg in sys.argv[1:]:
-        if arg.startswith("-") or arg == "gate":
+        if prev_was_value_flag:
+            new_argv.append(arg)  # pass through — it's a value, not a flag
+            prev_was_value_flag = False
+        elif arg.startswith("-") or arg == "gate":
             new_argv.append(arg)
+            prev_was_value_flag = arg in value_flags
         else:
             new_argv.append(WORD_MAP.get(arg.lower(), arg))
+            prev_was_value_flag = False
     sys.argv = new_argv
 
 
