@@ -29,6 +29,27 @@ def which(name: str) -> str | None:
     return shutil.which(name)
 
 
+def _load_project_excludes(root: Path) -> set[str]:
+    """Load .audit-test-ignore patterns from a project root.
+
+    Returns extra dir/file name patterns to exclude.  Patterns are exact
+    name matches (not substrings), # for comments.
+    """
+    ignore_file = root / ".audit-test-ignore"
+    if not ignore_file.exists():
+        return set()
+    extras: set[str] = set()
+    try:
+        for line in ignore_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            extras.add(line)
+    except OSError:
+        pass
+    return extras
+
+
 def run_tool(cmd: list, cwd: Path, timeout: int = TOOL_TIMEOUT) -> tuple[int, str, str]:
     """Run an external tool; returns (rc, stdout, stderr). Never raises."""
     try:
@@ -48,11 +69,16 @@ def run_tool(cmd: list, cwd: Path, timeout: int = TOOL_TIMEOUT) -> tuple[int, st
         return -2, "", f"[failed to launch: {e}]"
 
 
-def iter_source_files(root: Path, extensions: tuple):
+def iter_source_files(
+    root: Path, extensions: tuple, extra_excludes: set[str] | None = None
+):
     """Yield files under root (root-level included) with pruned walk."""
+    excludes = ADAPTER_EXCLUDE_DIRS
+    if extra_excludes:
+        excludes = excludes | extra_excludes
     exts = tuple(extensions)
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in ADAPTER_EXCLUDE_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in excludes]
         for fn in filenames:
             if fn.endswith(exts):
                 yield Path(dirpath) / fn
@@ -76,11 +102,15 @@ class LanguageAdapter:
         for marker in cls.marker_files:
             if (target_root / marker).exists():
                 return True
-        return next(iter_source_files(target_root, cls.extensions), None) is not None
+        root = target_root.resolve()
+        extras = _load_project_excludes(root)
+        return next(iter_source_files(root, cls.extensions, extras), None) is not None
 
     @classmethod
     def collect_files(cls, target_root: Path) -> list:
-        return sorted(iter_source_files(target_root, cls.extensions))
+        root = target_root.resolve()
+        extras = _load_project_excludes(root)
+        return sorted(iter_source_files(root, cls.extensions, extras))
 
     @classmethod
     def syntax_check(cls, target_root: Path) -> AuditResult:

@@ -48,6 +48,13 @@ EXCLUDE_DIRS = {
     "dist",
     "build",
     ".eggs",
+    "bunick-ai-desktop",
+    "logs",
+    "eval_results",
+    "golden_tasks",
+    "fixes and info",
+    ".vscode",
+    ".idea",
 }
 
 
@@ -95,14 +102,19 @@ def _run(
 
 def _py_files(root: Path, tests_dir: Path) -> tuple[list[Path], list[Path]]:
     prod, tests = [], []
-    for py_file in root.rglob("*.py"):
-        if any(part in EXCLUDE_DIRS for part in py_file.parts):
-            continue
-        (
-            tests
-            if tests_dir in py_file.parents or py_file.parent == tests_dir
-            else prod
-        ).append(py_file)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+        for fn in filenames:
+            if not fn.endswith(".py"):
+                continue
+            py_file = Path(dirpath) / fn
+            if any(part in EXCLUDE_DIRS for part in py_file.parts):
+                continue
+            (
+                tests
+                if tests_dir in py_file.parents or py_file.parent == tests_dir
+                else prod
+            ).append(py_file)
     return prod, tests
 
 
