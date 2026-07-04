@@ -1,4 +1,6 @@
 # audit-test
+**One command. One policy. One report. One fail-closed verdict.**
+
 
 <p align="center">
   <a href="#install"><img src="https://img.shields.io/badge/%F0%9F%9B%A0%EF%B8%8F-Install-f7a800" alt="Install"></a>
@@ -8,7 +10,6 @@
   <a href="#license"><img src="https://img.shields.io/badge/%F0%9F%93%9C-CC_BY--NC--ND_4.0-d4d4d4" alt="License"></a>
 </p>
 
-**One command. One policy. One report. One fail-closed verdict.**
 
 ## Install
 
