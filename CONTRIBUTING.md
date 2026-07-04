@@ -31,9 +31,10 @@ audit-test v
    - `[FAIL]` — **not allowed on any module** (means HIGH findings exist)
    - `[CRASH]` — **not allowed** (audit itself broke)
 
-   Required commands before every PR:
+   Required commands before every PR: 
    ```
-   cd AUDIT-TEST
+   cd AUDIT-TEST               # cd to your clone
+                               # use current version to test your new version
    audit-test fix              # format + lint-fix
    audit-test --skip quality   # must pass all (no WARN allowed)
    audit-test q v              # quality verbose — only Q5/Q6 may WARN
