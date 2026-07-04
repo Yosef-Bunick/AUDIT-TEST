@@ -144,25 +144,14 @@ import re
 import sys
 from pathlib import Path
 
+from audit_shared import SKIP_PARTS
+
 ROOT = Path(__file__).parent.parent
 # Allow --path override for audit-code wrapper
 for _i, _a in enumerate(sys.argv):
     if _a == "--path" and _i + 1 < len(sys.argv):
         ROOT = Path(sys.argv[_i + 1]).resolve()
         break
-SKIP_PARTS = {
-    "audit",
-    "graphify-out",
-    "bunick-ai-desktop",
-    "__pycache__",
-    "sandbox",
-    "logs",
-    "eval_results",
-    "golden_tasks",
-    "fixes and info",
-    ".git",
-    "node_modules",
-}
 
 SUBPROCESS_FNS = {"run", "call", "check_call", "check_output"}
 BLOCKING_WAITS = {"communicate", "wait", "join"}

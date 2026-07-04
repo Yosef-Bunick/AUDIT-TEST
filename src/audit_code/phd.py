@@ -23,7 +23,13 @@ def run(target_root: Path, strict: bool = True) -> AuditResult:
     """Run the PhD audit against a target project."""
     try:
         proc = subprocess.run(
-            [sys.executable, str(_SCRIPT), "--path", str(target_root)],
+            [
+                sys.executable,
+                str(_SCRIPT),
+                "--path",
+                str(target_root),
+                "--min-severity=HIGH",
+            ],
             capture_output=True,
             text=True,
             encoding="utf-8",

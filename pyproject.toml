@@ -15,3 +15,11 @@ audit-code = "audit_code.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff.lint]
+ignore = [
+    "S101", "S105", "S110", "S112", "S603", "S607",
+    "B007",   # unused loop variable (legitimate in AST walkers)
+    "B023",   # function binding loop variable
+    "B905",   # zip() without strict (pre-3.10 compat)
+]

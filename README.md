@@ -41,6 +41,22 @@ audit-code gate --kill 80     # raise mutation bar (default 60%)
 audit-code gate --path <dir>  # gate a specific project
 ```
 
+### Standalone scripts
+
+The original audit scripts also work standalone — no pip install needed.
+Copy them into any project and run directly:
+
+```powershell
+python audit_wiring.py         # dead symbols, config drift
+python audit_phd.py            # exception discipline, security patterns
+python audit_phd.py --min-severity=HIGH   # HIGH findings only
+python audit_runtime.py        # timeouts, log hygiene, prompt contracts
+python audit_suite.py          # run pytest, classify failures
+python audit_quality.py        # black, ruff, mypy, CVE, coverage
+python audit_gate.py           # judge working-tree diff vs HEAD
+python run_all_audits.py       # orchestrate all five into one report
+```
+
 ## The stack
 
 | Audit | Question it answers |
@@ -50,6 +66,12 @@ audit-code gate --path <dir>  # gate a specific project
 | runtime | **Will it hang or crash?** Unbounded loops, missing timeouts, secrets in logs |
 | suite | **Is the test suite healthy?** Runs pytest, classifies real vs pollution failures |
 | quality | **External gates + execution truth.** Black, ruff, mypy, CVE scan, coverage |
+
+### Severity levels
+
+Every finding has a severity: **HIGH**, **MEDIUM**, or **INFO**. Default reports all.
+The `phd` audit supports `--min-severity=HIGH` to suppress non-HIGH. `audit-code`
+applies this automatically.
 
 ## The gate
 
@@ -69,13 +91,37 @@ disposable git worktree:
 - **Judge the diff, not the history.** Legacy findings are baseline; only regressions fail.
 - **Honest limits.** No static tool promises semantic correctness — this stack narrows the gap.
 
+## Configuration
+
+### `.audit-test-ignore`
+
+Skip directories or files from all scans. Drop this file in your project root.
+One pattern per line, `#` for comments. Patterns are merged with built-in defaults
+(`.venv`, `node_modules`, `.git`, `__pycache__`, `dist`, `build`, etc.):
+
+```
+# .audit-test-ignore
+generated/
+third_party/
+*.pb2.py
+```
+
+Patterns match directory/file name parts (exact match, not substring).
+
+### `# audit: ok`
+
+Add `# audit: ok` to the end of any line to suppress a finding on that line.
+Use sparingly — every suppression is counted in the summary.
+
+Applies to `wiring`, `phd`, and `runtime` audits. Example:
+
+```python
+except Exception:         # audit: ok  (intentional swallow — benign)
+TOOL_TIMEOUT = 600        # audit: ok  (tool config, not a tuning knob)
+subprocess.run(cmd)       # audit: ok  (audit tools ARE subprocess runners)
+```
+
 ## Requirements
 
 Python 3.10+, git, pytest
 Optional (auto-detected): `coverage`, `black`, `ruff`, `mypy`, `pip-audit`, `mutmut`
-
-## Suppressions
-
-```python
-x = risky_thing()  # audit: ok
-```

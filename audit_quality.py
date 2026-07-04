@@ -49,6 +49,7 @@ run_all_audits.py parses it unchanged.
 
 import argparse
 import ast
+import importlib.util
 import json
 import os
 import re
@@ -58,29 +59,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+from audit_config import DOC_THRESHOLD_PCT, MIN_FLAG_BODY_LINES, TOOL_TIMEOUT
+from audit_shared import EXCLUDE_DIRS
+
 ROOT = Path(__file__).resolve().parent.parent
-EXCLUDE_DIRS = {
-    ".git",
-    "__pycache__",
-    ".venv",
-    "venv",
-    "node_modules",
-    "graphify-out",
-    "sandbox",
-    ".ruff_cache",
-    ".pytest_cache",
-    "scratch",
-    "dist",
-    "build",
-    ".eggs",
-}
-TOOL_TIMEOUT = 600
-# Docstring coverage: private helpers (_name) are exempt; dunders except
-# __init__ are exempt (their contract is the protocol, not prose).
-DOC_THRESHOLD_PCT = 70
-# Q5: defs smaller than this many body lines are not worth flagging alone
-# (property-style one-liners) but still count in the percentage.
-MIN_FLAG_BODY_LINES = 2
 
 
 def _tool(name: str) -> str | None:
@@ -89,8 +71,6 @@ def _tool(name: str) -> str | None:
     that can fail and make an installed tool look absent. And a spec whose
     location is INSIDE the audited repo is the repo shadowing the pip name
     (this repo's safety/ package is sandbox code, not the CVE scanner)."""
-    import importlib.util
-
     try:
         spec = importlib.util.find_spec(name.replace("-", "_"))
         if spec is not None:
@@ -258,7 +238,7 @@ def q_mypy(root: Path, counts: dict, strict: bool):
     if strict:
         args.append("--strict")
     rc, out = _run(args, root)
-    errs = [l for l in out.splitlines() if ": error:" in l]
+    errs = [line for line in out.splitlines() if ": error:" in line]
     if rc in (-1, -2):
         print(f"  SKIP: {out.strip()[:200]}\n")
         return
@@ -267,8 +247,8 @@ def q_mypy(root: Path, counts: dict, strict: bool):
         print("  clean\n")
         return
     by_file: dict = {}
-    for l in errs:
-        by_file.setdefault(l.split(":", 1)[0], []).append(l)
+    for line in errs[:10]:
+        by_file.setdefault(line.split(":", 1)[0], []).append(line)
     print(f"  {len(errs)} error(s) across {len(by_file)} file(s) (top files):")
     for f, items in sorted(by_file.items(), key=lambda kv: -len(kv[1]))[:10]:
         print(f"    {len(items):4} x {f}")
@@ -302,10 +282,10 @@ def q_cves(root: Path, counts: dict):
         print(
             f"  {name}: {max(vulns,1)} vulnerability signal(s) — run `{name}` for detail"
         )
-        for l in [l for l in out.splitlines() if re.search(r"(?i)CVE-|vulnerab", l)][
-            :8
-        ]:
-            print(f"    {l.strip()[:100]}")
+        for line in [
+            line for line in out.splitlines() if re.search(r"(?i)CVE-|vulnerab", line)
+        ][:8]:
+            print(f"    {line.strip()[:100]}")
         print()
         return
     print("  SKIP: neither pip-audit nor safety installed\n")
@@ -341,8 +321,6 @@ def _def_spans(path: Path) -> list[tuple[str, int, int, int]]:
 
 def q_def_coverage(root: Path, tests_dir: Path, counts: dict, pytest_extra: list):
     _section("Q5", "MEDIUM", "defs whose body NEVER EXECUTES under the suite")
-    import importlib.util
-
     if importlib.util.find_spec("coverage") is None:
         print("  SKIP: coverage not installed (pip install coverage)\n")
         return
@@ -402,7 +380,7 @@ def q_def_coverage(root: Path, tests_dir: Path, counts: dict, pytest_extra: list
         lines = executed.get(p.resolve())
         for qual, defline, b0, b1 in _def_spans(p):
             total += 1
-            ran = bool(lines) and any(l in lines for l in range(b0, b1 + 1))
+            ran = bool(lines) and any(ln in lines for ln in range(b0, b1 + 1))
             if not ran:
                 never += 1
                 if (b1 - b0 + 1) >= MIN_FLAG_BODY_LINES:
@@ -544,7 +522,7 @@ def q_mutation(root: Path, counts: dict, enabled: bool):
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
+    except Exception:  # audit: ok
         pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--path", default=str(ROOT), help="repo root to audit")

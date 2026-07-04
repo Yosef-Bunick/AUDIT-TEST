@@ -15,8 +15,10 @@ Usage:
 import argparse
 import sys
 
+from audit_code.gate import run_gate as gate_main
 from audit_code.models import EXIT_FAIL, EXIT_PASS
 from audit_code.project import find_target_root
+from audit_code.runner import run_suite
 
 
 def _is_gate_mode() -> bool:
@@ -102,8 +104,6 @@ def run_audit(args: argparse.Namespace) -> int:
     """Run the standard audit suite."""
     target_root = find_target_root(args.path)
 
-    from audit_code.runner import run_suite
-
     mode = "min" if args.min else ("full" if args.full else "default")
     results = run_suite(target_root, mode=mode, fix=args.fix)
 
@@ -120,8 +120,6 @@ def run_audit(args: argparse.Namespace) -> int:
 def run_gate_cmd(args: argparse.Namespace) -> int:
     """Run the change gate."""
     target_root = find_target_root(args.path)
-
-    from audit_code.gate import run_gate as gate_main
 
     return gate_main(
         target_root,

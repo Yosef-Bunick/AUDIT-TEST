@@ -129,6 +129,8 @@ import re
 import sys
 from pathlib import Path
 
+from audit_shared import SKIP_PARTS
+
 ROOT = Path(__file__).parent.parent
 # Allow --path override for audit-code wrapper
 for _i, _a in enumerate(sys.argv):
@@ -136,19 +138,6 @@ for _i, _a in enumerate(sys.argv):
         ROOT = Path(sys.argv[_i + 1]).resolve()
         break
 
-SKIP_PARTS = {
-    "audit",
-    "graphify-out",
-    "bunick-ai-desktop",
-    "__pycache__",
-    "sandbox",
-    "logs",
-    "eval_results",
-    "golden_tasks",
-    "fixes and info",
-    ".git",
-    "node_modules",
-}
 # Names too generic to classify (would drown in shared-name collisions),
 # plus entry points invoked from outside the scanned tree.
 NAME_SKIP = {"main", "cli", "run", "wrapper", "inner", "decorator"}

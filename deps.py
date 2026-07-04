@@ -275,9 +275,12 @@ _STDLIB = {
 }
 
 # ── Auto-detect internal packages from project layout ──
-for _entry in ROOT.iterdir():
-    if _entry.is_dir() and (_entry / "__init__.py").exists():
-        _INTERNAL.add(_entry.name)
+_AUTO_INTERNAL = {
+    _entry.name
+    for _entry in ROOT.iterdir()
+    if _entry.is_dir() and (_entry / "__init__.py").exists()
+}
+_INTERNAL = _INTERNAL | _AUTO_INTERNAL
 
 
 def _is_external(mod: str) -> bool:

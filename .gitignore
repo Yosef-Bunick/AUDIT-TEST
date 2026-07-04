@@ -21,10 +21,18 @@ Thumbs.db
 
 # Test/coverage
 .pytest_cache/
+.ruff_cache/
 .coverage
+.gate_cov
+.gate_cov.json
 *.cover
 htmlcov/
+
+# Audit tool outputs
+*.phl
+.requirements
 
 # Temp
 *.tmp
 *.swp
+*~

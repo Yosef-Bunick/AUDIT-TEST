@@ -7,6 +7,7 @@ subprocess + regex-parsing stdout.
 import time
 from pathlib import Path
 
+from audit_code import phd, quality, runtime, suite, wiring
 from audit_code.models import AuditResult, AuditStatus
 
 
@@ -85,8 +86,6 @@ def _run_one_module(
     target_root: Path, module_name: str, mode: str, fix: bool = False
 ) -> AuditResult:
     """Run one audit module, preferring direct import over subprocess."""
-
-    from audit_code import phd, quality, runtime, suite, wiring
 
     module_map = {
         "wiring": wiring,

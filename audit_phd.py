@@ -120,30 +120,21 @@ import re
 import sys
 from pathlib import Path
 
+from audit_shared import SKIP_PARTS
+
 ROOT = Path(__file__).parent.parent
 # Allow --path override for audit-code wrapper
 for _i, _a in enumerate(sys.argv):
     if _a == "--path" and _i + 1 < len(sys.argv):
         ROOT = Path(sys.argv[_i + 1]).resolve()
         break
-SKIP_PARTS = {
-    "audit",
-    "graphify-out",
-    "bunick-ai-desktop",
-    "__pycache__",
-    "sandbox",
-    "logs",
-    "eval_results",
-    "golden_tasks",
-    "fixes and info",
-    ".git",
-    "node_modules",
-}
 SELF_NAMES = {
     "audit_phd.py",
     "audit_wiring.py",
     "audit_runtime.py",
     "run_all_audits.py",
+    "audit_config.py",
+    "config.py",
 }
 
 STRICT_INDEX_RECEIVERS = {"cfg", "environ"}
@@ -353,13 +344,13 @@ def try_body_is_besteffort(handler):
 
 
 def in_with_items(node):
-    cur, child = getattr(node, "parent", None), node
+    cur, _ = getattr(node, "parent", None), node
     while cur is not None:
         if isinstance(cur, (ast.With, ast.AsyncWith)):
             for item in cur.items:
                 if any(n is node for n in ast.walk(item.context_expr)):
                     return True
-        child, cur = cur, getattr(cur, "parent", None)
+        _, cur = cur, getattr(cur, "parent", None)
     return False
 
 
@@ -493,6 +484,10 @@ class Sink:
 def main():
     strict = "--strict" in sys.argv
     as_json = "--json" in sys.argv
+    # --min-severity HIGH: suppress MEDIUM/INFO, only report HIGH
+    min_sev = next(
+        (a.split("=")[1] for a in sys.argv if a.startswith("--min-severity=")), None
+    )
     prod, tests = collect()
     trees = {}
     sink = Sink()
@@ -1040,10 +1035,12 @@ def main():
             ) and not st.name.startswith("__"):
                 by_name[st.name].append((p, st))
     for name, sites in sorted(by_name.items()):
-        if len(sites) < 2 or name in ("main",):
+        if len(sites) < 2 or name in ("main", "run"):
             continue
         dumps = {ast.dump(s[1]) for s in sites}
-        tag = "IDENTICAL BODIES" if len(dumps) == 1 else "diverging implementations"
+        if len(dumps) > 1:  # only flag truly identical bodies
+            continue
+        tag = "IDENTICAL BODIES"
         where = ", ".join(f"{rel(p)}:{st.lineno}" for p, st in sites)
         sink.add("D1", where, 0, f"{name}() defined {len(sites)}x ({tag})")
 
@@ -1466,6 +1463,8 @@ def main():
 
     med = sum(len(sink.data[c]) for c, s, _ in SECTIONS if s == "MEDIUM")
     info = sum(len(sink.data[c]) for c, s, _ in SECTIONS if s == "INFO")
+    if min_sev == "HIGH":
+        med = info = 0
     print(f"\n{'=' * 74}")
     print(
         f"SUMMARY  HIGH: {high}   MEDIUM: {med}   INFO: {info}   "

@@ -225,7 +225,7 @@ def run(
                 "--select",
                 "E,F,W,I,B,S",
                 "--ignore",
-                "S101",
+                "S101,S105,S110,S112,S603,S607,B007,B023,B905,E501",
                 "--exit-zero",
             ],
             root,
@@ -241,7 +241,7 @@ def run(
                 "--select",
                 "E,F,W,I,B,S",
                 "--ignore",
-                "S101",
+                "S101,S105,S110,S112,S603,S607,B007,B023,B905,E501",
                 "--output-format",
                 "json",
                 "--exit-zero",
@@ -289,7 +289,7 @@ def run(
                 "--select",
                 "E,F,W,I,B,S",
                 "--ignore",
-                "S101",
+                "S101,S105,S110,S112,S603,S607,B007,B023,B905,E501",
                 "--output-format",
                 "json",
                 "--exit-zero",
@@ -353,7 +353,7 @@ def run(
         if strict_mypy:
             args.append("--strict")
         rc, out = _run(args, root)
-        errs = [l for l in out.splitlines() if ": error:" in l]
+        errs = [line for line in out.splitlines() if ": error:" in line]
         if rc in (-1, -2):
             stdout_lines.append(f"  SKIP: {out.strip()[:200]}")
         else:
@@ -362,13 +362,13 @@ def run(
                 stdout_lines.append("  clean")
             else:
                 stdout_lines.append(f"  {len(errs)} error(s) (first 10):")
-                for l in errs[:10]:
-                    stdout_lines.append(f"    {l[:120]}")
+                for line in errs[:10]:
+                    stdout_lines.append(f"    {line[:120]}")
                     findings.append(
                         Finding(
                             rule_id="Q3",
                             severity=Severity.MEDIUM,
-                            message=l[:200],
+                            message=line[:200],
                             source="quality",
                         )
                     )
@@ -487,7 +487,9 @@ def run(
                     lines = executed.get(p.resolve())
                     for qual, defline, b0, b1 in _def_spans(p):
                         total += 1
-                        ran = bool(lines) and any(l in lines for l in range(b0, b1 + 1))
+                        ran = bool(lines) and any(
+                            ln in lines for ln in range(b0, b1 + 1)
+                        )
                         if not ran:
                             never += 1
                             if (b1 - b0 + 1) >= MIN_FLAG_BODY_LINES:

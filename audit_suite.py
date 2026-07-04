@@ -50,17 +50,11 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
+from audit_config import FULL_SUITE_TIMEOUT, MAX_SOLO_RERUNS, SOLO_TIMEOUT
+
 ROOT = Path(__file__).parent.parent
 TESTS_DIR = "tests"
-# Keep flags in sync with tests/pytest.ini's addopts rationale: logfire's
-# broken plugin crashes collection; deepeval's summary hook crashes on
-# bracketed paths in skip reasons. pytest.ini already blocks both, but the
-# baseline worktree may hold an OLDER pytest.ini - pass them explicitly.
 PYTEST_ARGS = ["-q", "--tb=no", "-p", "no:logfire", "-p", "no:deepeval"]
-
-FULL_SUITE_TIMEOUT = 900  # seconds; the suite is ~2 min today
-SOLO_TIMEOUT = 180  # per single-test re-run
-MAX_SOLO_RERUNS = 10  # classification cap - past this, fix the suite first
 
 VERDICT_RE = re.compile(r"(\d+) passed|(\d+) failed|no tests ran", re.MULTILINE)
 FAILED_RE = re.compile(r"^(FAILED|ERROR)\s+(\S+)", re.MULTILINE)
@@ -176,10 +170,60 @@ def _section(code: str, sev: str, title: str, n: int):
     print("=" * 74)
 
 
+def _s3_s5_report(out: str, r: dict, med: int, info: int) -> tuple[int, int]:
+    """S3 collection errors + S4 import-drift skips + S5 skip inventory."""
+    # S3: collection errors
+    collect_errs = sorted(
+        {
+            m.group(1) or m.group(2)
+            for m in COLLECT_ERR_RE.finditer(out)
+            if "::" not in m.group(0)
+        }
+    )
+    _section(
+        "S3", "MEDIUM", "collection errors (file could not import)", len(collect_errs)
+    )
+    med += len(collect_errs)
+    for f in collect_errs:
+        print(f"  {f}")
+    print()
+    # S4: import-drift skips
+    drift = {
+        reason: n
+        for reason, n in r["skips"].items()
+        if IMPORT_DRIFT_RE.search(reason) and not ENV_SKIP_RE.search(reason)
+    }
+    _section(
+        "S4",
+        "MEDIUM",
+        "import-drift skips - tests silently guarding NOTHING",
+        len(drift),
+    )
+    med += len(drift)
+    for reason, n in sorted(drift.items(), key=lambda kv: -kv[1]):
+        print(f"  {n:4} x  {reason[:100]}")
+    if drift:
+        print(
+            "  (fix the test file's import path - e.g. _imp('checkpoint') "
+            "-> _imp('memory.checkpoint') - do not delete the tests)"
+        )
+    print()
+    # S5: skip inventory
+    env_skips = {rn: n for rn, n in r["skips"].items() if rn not in drift}
+    _section("S5", "INFO", "skip inventory (env-dependent is expected)", len(env_skips))
+    info += len(env_skips)
+    for reason, n in sorted(env_skips.items(), key=lambda kv: -kv[1])[:15]:
+        print(f"  {n:4} x  {reason[:100]}")
+    if len(env_skips) > 15:
+        print(f"  ... and {len(env_skips) - 15} more reasons")
+    print()
+    return med, info
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
+    except Exception:  # audit: ok
         pass
     strict = "--strict" in sys.argv
     fast = "--fast" in sys.argv
@@ -261,53 +305,7 @@ def main():
         print(f"  {f}")
     print()
 
-    # ── S3: collection errors ──
-    collect_errs = sorted(
-        {
-            m.group(1) or m.group(2)
-            for m in COLLECT_ERR_RE.finditer(out)
-            if "::" not in m.group(0)
-        }
-    )
-    _section(
-        "S3", "MEDIUM", "collection errors (file could not import)", len(collect_errs)
-    )
-    med += len(collect_errs)
-    for f in collect_errs:
-        print(f"  {f}")
-    print()
-
-    # ── S4: import-drift skips (masked coverage) ──
-    drift = {
-        reason: n
-        for reason, n in r["skips"].items()
-        if IMPORT_DRIFT_RE.search(reason) and not ENV_SKIP_RE.search(reason)
-    }
-    _section(
-        "S4",
-        "MEDIUM",
-        "import-drift skips - tests silently guarding NOTHING",
-        len(drift),
-    )
-    med += len(drift)
-    for reason, n in sorted(drift.items(), key=lambda kv: -kv[1]):
-        print(f"  {n:4} x  {reason[:100]}")
-    if drift:
-        print(
-            "  (fix the test file's import path - e.g. _imp('checkpoint') "
-            "-> _imp('memory.checkpoint') - do not delete the tests)"
-        )
-    print()
-
-    # ── S5: skip inventory ──
-    env_skips = {rn: n for rn, n in r["skips"].items() if rn not in drift}
-    _section("S5", "INFO", "skip inventory (env-dependent is expected)", len(env_skips))
-    info += len(env_skips)
-    for reason, n in sorted(env_skips.items(), key=lambda kv: -kv[1])[:15]:
-        print(f"  {n:4} x  {reason[:100]}")
-    if len(env_skips) > 15:
-        print(f"  ... and {len(env_skips) - 15} more reasons")
-    print()
+    med, info = _s3_s5_report(out, r, med, info)
 
     print("=" * 74)
     print(

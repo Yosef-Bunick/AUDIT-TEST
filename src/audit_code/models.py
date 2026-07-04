@@ -60,10 +60,6 @@ class AuditResult:
                     self.info += 1
 
     @property
-    def is_clean(self) -> bool:
-        return self.status in (AuditStatus.PASS, AuditStatus.SKIP)
-
-    @property
     def is_failure(self) -> bool:
         return self.status in (AuditStatus.FAIL, AuditStatus.CRASH, AuditStatus.ERROR)
 
