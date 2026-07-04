@@ -19,17 +19,24 @@ _SCRIPT = Path(__file__).resolve().parent.parent.parent / "audit_phd.py"
 SUMMARY_RE = re.compile(r"SUMMARY\s+HIGH:\s*(\d+)\s+MEDIUM:\s*(\d+)\s+INFO:\s*(\d+)")
 
 
-def run(target_root: Path, strict: bool = True) -> AuditResult:
-    """Run the PhD audit against a target project."""
+def run(
+    target_root: Path, strict: bool = True, severity: str | None = "HIGH"
+) -> AuditResult:
+    """Run the PhD audit against a target project.
+
+    severity: "HIGH" (only HIGH), "MEDIUM" (HIGH+MEDIUM), None (all: HIGH+MEDIUM+INFO)
+    """
+    cmd = [
+        sys.executable,
+        str(_SCRIPT),
+        "--path",
+        str(target_root),
+    ]
+    if severity:
+        cmd.append(f"--min-severity={severity}")
     try:
         proc = subprocess.run(
-            [
-                sys.executable,
-                str(_SCRIPT),
-                "--path",
-                str(target_root),
-                "--min-severity=HIGH",
-            ],
+            cmd,
             capture_output=True,
             text=True,
             encoding="utf-8",

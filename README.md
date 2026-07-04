@@ -24,9 +24,9 @@ pip install -e .
 
 ```powershell
 audit-code                    # full audit on current directory
-audit-code --min              # fast: wiring + quality only (seconds)
-audit-code --full             # complete: all checks
-audit-code --fix              # auto-format: black + ruff --fix
+audit-code --min              # fast: wiring + phd + quality (seconds)
+audit-code --full             # complete: all checks + raw output
+audit-code --fix              # auto-format: black + ruff --fix (~1s)
 audit-code --path <dir>       # audit a specific project
 audit-code --report-only      # print findings, always exit 0
 audit-code --json results.json   # write JSON report
@@ -35,6 +35,45 @@ audit-code --junit results.xml   # write JUnit (CI dashboards)
 audit-code --profile agent-engine  # enable Agent Engine profile
 audit-code --config audit-code.toml  # use custom config file
 audit-code --help             # show all options
+```
+
+Aliases: `audit-test` and `audit-tests` work identically to `audit-code`.
+
+### Severity filtering
+
+```powershell
+audit-code --high             # only HIGH severity (default)
+audit-code --medium           # HIGH + MEDIUM severity
+audit-code --info             # HIGH + MEDIUM + INFO
+audit-code --all              # all findings (same as --info)
+```
+
+### Verbosity
+
+```powershell
+audit-code --verbose          # full detail output for every audit step
+audit-code --phd --high -v    # PHD only, HIGH only, full detail
+```
+
+### Per-module selection
+
+Any combination works:
+
+```powershell
+audit-code --phd              # PHD static audit only
+audit-code --wiring           # wiring audit only
+audit-code --runtime          # runtime audit only
+audit-code --suite            # test suite audit only
+audit-code --quality          # quality gates only
+audit-code --python           # Python syntax check only
+audit-code --syntax           # all language syntax checks
+audit-code --tests            # non-Python test suites
+audit-code --lint             # ruff check only
+audit-code --lint --fix       # ruff --fix only
+audit-code --black            # black --check only
+audit-code --black --fix      # black format only
+audit-code --phd --wiring --medium   # PHD + wiring, HIGH+MEDIUM
+audit-code --suite --quality         # test suite + quality gates
 ```
 
 ### Change gate
@@ -107,9 +146,9 @@ Restrict detection with `[audit] languages = ["python", "go"]` in
 
 ### Severity levels
 
-Every finding has a severity: **HIGH**, **MEDIUM**, or **INFO**. Default reports all.
-The `phd` audit supports `--min-severity=HIGH` to suppress non-HIGH. `audit-code`
-applies this automatically.
+Every finding has a severity: **HIGH**, **MEDIUM**, or **INFO**. Default reports
+HIGH only. Use `--medium`, `--info`, or `--all` to expand. The `phd` audit
+supports `--min-severity=HIGH` when run standalone.
 
 ## The gate
 
@@ -163,3 +202,25 @@ subprocess.run(cmd)       # audit: ok  (audit tools ARE subprocess runners)
 
 Python 3.10+, git, pytest
 Optional (auto-detected): `coverage`, `black`, `ruff`, `mypy`, `pip-audit`, `mutmut`
+
+## License
+
+This work is licensed under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License (CC BY-NC-ND 4.0).
+
+© Yosef Bunick. All rights reserved.
+
+You are free to:
+
+Share — copy and redistribute the material in any medium or format
+
+Under the following terms:
+
+Attribution — You must give appropriate credit, provide a link to the license, and indicate if changes were made.
+NonCommercial — You may not use the material for commercial purposes.
+NoDerivatives — If you remix, transform, or build upon the material, you may not distribute the modified material.
+
+License details: https://creativecommons.org/licenses/by-nc-nd/4.0/
+
+This license applies unless otherwise explicitly stated within specific files or directories of this repository.
+
+For permission to monetize, distribute modified versions, remix, sublicense, or commercially use this repository, please contact the creator directly.

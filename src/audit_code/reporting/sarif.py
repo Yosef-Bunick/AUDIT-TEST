@@ -20,7 +20,7 @@ def write(audits: list[AuditResult], path: str | Path) -> int:
                     "artifactLocation": {"uri": uri},
                 }
                 if f.line:
-                    location["physicalLocation"]["region"] = {"startLine": f.line}
+                    location["physicalLocation"]["region"] = {"startLine": f.line}  # type: ignore[dict-item]
             results.append(
                 {
                     "ruleId": f.rule_id,

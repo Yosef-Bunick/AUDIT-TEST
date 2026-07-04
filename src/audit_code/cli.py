@@ -1,15 +1,23 @@
 """CLI entry point for audit-code.
 
 Usage:
-    audit-code                    run normal audit on cwd
-    audit-code --min              fast local checks only
-    audit-code --full             complete analysis
-    audit-code --path <dir>       audit a specific project
-    audit-code --report-only      print findings, always exit 0
-    audit-code gate               judge only the working-tree diff vs HEAD
-    audit-code gate --fast        skip mutation (G4)
-    audit-code gate --path <dir>  gate a specific project
-    audit-code gate --kill N      set mutation kill % threshold
+    audit-code                         run all checks on cwd
+    audit-code --high                  only HIGH severity (default)
+    audit-code --medium                HIGH + MEDIUM severity
+    audit-code --info                  HIGH + MEDIUM + INFO
+    audit-code --all                   all findings (same as --info)
+    audit-code --verbose               full detail output
+    audit-code --min                   fast checks: wiring + phd + quality
+    audit-code --full                  complete analysis + raw output
+
+    audit-code --phd                   PHD static audit only
+    audit-code --phd --wiring          run phd + wiring only
+    audit-code --phd --high -v         phd, HIGH only, full detail
+    audit-code --suite --quality       test suite + quality gates only
+
+    audit-code --path <dir>            audit a specific project
+    audit-code --report-only           print findings, always exit 0
+    audit-code gate                    judge only the working-tree diff vs HEAD
 """
 
 import argparse
@@ -22,9 +30,21 @@ from audit_code.project import find_target_root
 from audit_code.reporting import json_report, junit, sarif
 from audit_code.runner import run_suite
 
+ALL_MODULES = {
+    "syntax",
+    "wiring",
+    "phd",
+    "runtime",
+    "suite",
+    "quality",
+    "tests",
+    "python",
+    "lint",
+    "black",
+}
+
 
 def _is_gate_mode() -> bool:
-    """Check if first positional arg is 'gate'."""
     for a in sys.argv[1:]:
         if not a.startswith("-"):
             return a == "gate"
@@ -45,7 +65,7 @@ def build_audit_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--min",
         action="store_true",
-        help="Fast local checks: syntax + static + basic security",
+        help="Fast local checks: wiring + phd + quality",
     )
     parser.add_argument(
         "--full",
@@ -98,6 +118,40 @@ def build_audit_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="Path to audit-code.toml config file",
     )
+
+    # --- severity level (mutually exclusive) ---
+    sev = parser.add_mutually_exclusive_group()
+    sev.add_argument("--high", action="store_true", help="Only HIGH severity (default)")
+    sev.add_argument("--medium", action="store_true", help="HIGH + MEDIUM severity")
+    sev.add_argument("--info", action="store_true", help="HIGH + MEDIUM + INFO")
+    sev.add_argument("--all", action="store_true", help="All findings (same as --info)")
+
+    # --- verbosity ---
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Full detail output for every audit step",
+    )
+
+    # --- per-module selection (any combination) ---
+    parser.add_argument(
+        "--syntax", action="store_true", help="Run language syntax checks only"
+    )
+    parser.add_argument("--wiring", action="store_true", help="Run wiring audit")
+    parser.add_argument("--phd", action="store_true", help="Run PHD static audit")
+    parser.add_argument("--runtime", action="store_true", help="Run runtime audit")
+    parser.add_argument("--suite", action="store_true", help="Run test suite audit")
+    parser.add_argument("--quality", action="store_true", help="Run quality gates")
+    parser.add_argument(
+        "--tests", action="store_true", help="Run non-Python test suites"
+    )
+    parser.add_argument(
+        "--python", action="store_true", help="Run Python syntax check only"
+    )
+    parser.add_argument("--lint", action="store_true", help="Run ruff lint only")
+    parser.add_argument("--black", action="store_true", help="Run black format only")
+
     return parser
 
 
@@ -106,21 +160,12 @@ def build_gate_parser() -> argparse.ArgumentParser:
         prog="audit-code gate",
         description="Judge ONLY the working-tree diff vs HEAD",
     )
+    parser.add_argument("--path", "-p", default=None, help="Path to project")
     parser.add_argument(
-        "--path",
-        "-p",
-        default=None,
-        help="Path to project (default: current directory)",
+        "--fast", action="store_true", help="Skip mutation testing (G4)"
     )
     parser.add_argument(
-        "--fast",
-        action="store_true",
-        help="Skip mutation testing (G4)",
-    )
-    parser.add_argument(
-        "--no-static",
-        action="store_true",
-        help="Skip static baseline diff (G1)",
+        "--no-static", action="store_true", help="Skip static baseline diff (G1)"
     )
     parser.add_argument(
         "--kill",
@@ -132,19 +177,45 @@ def build_gate_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_audit(args: argparse.Namespace) -> int:
-    """Run the standard audit suite."""
-    target_root = find_target_root(args.path)
+def _resolve_severity(args: argparse.Namespace) -> str | None:
+    if args.info or args.all:
+        return None
+    if args.medium:
+        return "MEDIUM"
+    return "HIGH"
 
+
+def _resolve_modules(args: argparse.Namespace) -> set[str] | None:
+    """Return the set of modules selected, or None for all (mode logic).
+
+    --fix with no module flags defaults to quality-only.
+    """
+    selected = {m for m in ALL_MODULES if getattr(args, m, False)}
+    if not selected and args.fix:
+        return {"quality"}
+    return selected if selected else None
+
+
+def run_audit(args: argparse.Namespace) -> int:
+    target_root = find_target_root(args.path)
     cfg = load_project_config(target_root, args.config)
 
     mode = "min" if args.min else ("full" if args.full else "default")
     profile = args.profile or next(iter(cfg.get("audit", {}).get("profiles") or []), "")
+    severity = _resolve_severity(args)
+    modules = _resolve_modules(args)
+
     results = run_suite(
-        target_root, mode=mode, fix=args.fix, profile=profile, config=cfg
+        target_root,
+        mode=mode,
+        fix=args.fix,
+        profile=profile,
+        config=cfg,
+        severity=severity,
+        verbose=args.verbose,
+        modules=modules,
     )
 
-    # Write reports (CLI flag wins; audit-code.toml [reporting] is the default)
     reporting_cfg = cfg.get("reporting", {})
     json_out = args.json or reporting_cfg.get("json", "")
     sarif_out = args.sarif or reporting_cfg.get("sarif", "")
@@ -162,30 +233,20 @@ def run_audit(args: argparse.Namespace) -> int:
     for r in results:
         if r.is_failure:
             return EXIT_FAIL
-
     return EXIT_PASS
 
 
 def run_gate_cmd(args: argparse.Namespace) -> int:
-    """Run the change gate."""
     target_root = find_target_root(args.path)
-
     return gate_main(
-        target_root,
-        fast=args.fast,
-        no_static=args.no_static,
-        kill_pct=args.kill,
+        target_root, fast=args.fast, no_static=args.no_static, kill_pct=args.kill
     )
 
 
 def _force_utf8_output() -> None:
-    """Windows consoles default to cp1252, which cannot print the ✓/✗ status
-    glyphs — reconfigure stdout/stderr instead of crashing mid-report."""
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(  # type: ignore[union-attr]
-                encoding="utf-8", errors="replace"
-            )
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
         except (AttributeError, OSError):
             pass
 
@@ -193,10 +254,8 @@ def _force_utf8_output() -> None:
 def main():
     _force_utf8_output()
     if _is_gate_mode():
-        # Remove 'gate' from argv so argparse parses cleanly
         gate_idx = next(i for i, a in enumerate(sys.argv) if a == "gate")
-        gate_args = sys.argv[:gate_idx] + sys.argv[gate_idx + 1 :]
-        sys.argv = gate_args
+        sys.argv = sys.argv[:gate_idx] + sys.argv[gate_idx + 1 :]
         parser = build_gate_parser()
         args = parser.parse_args()
         sys.exit(run_gate_cmd(args))

@@ -60,7 +60,7 @@ def _parse(output: str, returncode: int) -> dict:
         if m.group(2):
             failed = int(m.group(2))
     failures = [(m.group(1), m.group(2)) for m in FAILED_RE.finditer(output)]
-    skips = Counter()
+    skips: "Counter[str]" = Counter()
     for m in SKIP_RE.finditer(output):
         skips[m.group(2).strip()] += int(m.group(1))
     return {
@@ -261,7 +261,7 @@ def run(
     findings: list[Finding] = []
     stdout_lines: list[str] = []
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     except Exception:  # audit: ok
         pass
 

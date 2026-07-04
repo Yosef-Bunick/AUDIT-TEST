@@ -105,7 +105,8 @@ def _run(
 
 
 def _py_files(root: Path, tests_dir: Path) -> tuple[list[Path], list[Path]]:
-    prod, tests = [], []
+    prod: list[Path] = []
+    tests: list[Path] = []
     for p in root.rglob("*.py"):
         if any(part in EXCLUDE_DIRS for part in p.parts):
             continue
@@ -380,7 +381,9 @@ def q_def_coverage(root: Path, tests_dir: Path, counts: dict, pytest_extra: list
         lines = executed.get(p.resolve())
         for qual, defline, b0, b1 in _def_spans(p):
             total += 1
-            ran = bool(lines) and any(ln in lines for ln in range(b0, b1 + 1))
+            ran = bool(lines) and any(
+                ln in (lines or set()) for ln in range(b0, b1 + 1)
+            )
             if not ran:
                 never += 1
                 if (b1 - b0 + 1) >= MIN_FLAG_BODY_LINES:

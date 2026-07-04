@@ -101,7 +101,8 @@ def _run(
 
 
 def _py_files(root: Path, tests_dir: Path) -> tuple[list[Path], list[Path]]:
-    prod, tests = [], []
+    prod: list[Path] = []
+    tests: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
         for fn in filenames:
@@ -141,7 +142,7 @@ def _def_spans(path: Path) -> list[tuple[str, int, int, int]]:
     return out
 
 
-def run(
+def run(  # audit: ok  (orchestrator — all quality gates in one function)
     target_root: Path,
     fast: bool = False,
     strict_mypy: bool = False,
@@ -155,8 +156,12 @@ def run(
     findings: list[Finding] = []
     stdout_lines: list[str] = []
 
+    # --fix mode: format + lint-fix only, skip coverage/mypy/CVE/etc
+    if fix:
+        fast = True
+
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     except Exception:  # audit: ok
         pass
 
@@ -200,7 +205,14 @@ def run(
     elif fix:
         excl = "|".join(re.escape(d) for d in sorted(EXCLUDE_DIRS))
         rc, out = _run(tool.split() + [".", "--extend-exclude", excl], root)
-        stdout_lines.append(f"  formatted ({'OK' if rc == 0 else 'errors'})")
+        changed = len(re.findall(r"^reformatted (.+)$", out, re.MULTILINE))
+        msg = (
+            f"\n  black: {changed} file(s) reformatted"
+            if changed
+            else "\n  black: already clean"
+        )
+        stdout_lines.append(msg)
+        print(msg)
         stdout_lines.append("")
     else:
         excl = "|".join(re.escape(d) for d in sorted(EXCLUDE_DIRS))
@@ -250,7 +262,12 @@ def run(
             ],
             root,
         )
-        stdout_lines.append(f"  auto-fixed ({'OK' if rc == 0 else 'errors'})")
+        fixed_count = len(re.findall(r"^Fixed \d", out, re.MULTILINE)) or (
+            1 if "fixed" in out.lower() else 0
+        )
+        msg = f"\n  ruff: {fixed_count} issue(s) auto-fixed"
+        stdout_lines.append(msg)
+        print(msg)
         # Still report remaining unfixable issues
         stdout_lines.append("  re-running check for remaining issues...")
         rc2, out2 = _run(
@@ -470,9 +487,17 @@ def run(
                 env=env,
             )
             if not data_file.exists():
-                stdout_lines.append("  SKIP: coverage produced no data")
+                reason = (
+                    f"coverage run exit={rc}"
+                    if rc != 0
+                    else "no .coverage file produced"
+                )
+                stdout_lines.append(
+                    f"  SKIP: {reason} — did pytest crash or have no tests?"
+                )
+                stdout_lines.append("")
             else:
-                rc, out = _run(
+                rc2, out2 = _run(
                     [
                         sys.executable,
                         "-m",
@@ -488,52 +513,70 @@ def run(
                 )
                 try:
                     cov = json.loads(json_file.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    stdout_lines.append("  SKIP: could not read coverage json")
+                except OSError as e:
+                    stdout_lines.append(f"  SKIP: could not read coverage json ({e})")
                     stdout_lines.append("")
-                    cov = {}
-                executed = {}
-                for fname, fdata in cov.get("files", {}).items():
-                    executed[Path(root / fname).resolve()] = set(
-                        fdata.get("executed_lines", [])
-                    )
-
-                prod_files, _ = _py_files(root, tests_dir)
-                total = never = 0
-                flagged = []
-                for p in prod_files:
-                    lines = executed.get(p.resolve())
-                    for qual, defline, b0, b1 in _def_spans(p):
-                        total += 1
-                        ran = bool(lines) and any(
-                            ln in lines for ln in range(b0, b1 + 1)
-                        )
-                        if not ran:
-                            never += 1
-                            if (b1 - b0 + 1) >= MIN_FLAG_BODY_LINES:
-                                flagged.append(
-                                    (p.relative_to(root), defline, qual, b1 - b0 + 1)
-                                )
-                pct = 100.0 * (total - never) / total if total else 100.0
-                counts["MEDIUM"] += len(flagged)
-                stdout_lines.append(
-                    f"  {total} defs scanned; {total - never} executed under tests "
-                    f"({pct:.1f}%); {never} never ran ({len(flagged)} flagged)"
-                )
-                for rel, line, qual, size in sorted(flagged, key=lambda x: -x[3])[:25]:
+                    cov = None
+                except json.JSONDecodeError as e:
+                    stdout_lines.append(f"  SKIP: coverage json is malformed: {e}")
+                    stdout_lines.append("")
+                    cov = None
+                if cov is not None and not cov.get("files"):
                     stdout_lines.append(
-                        f"    {str(rel):44} :{line:<5} {qual}  ({size} lines)"
+                        "  SKIP: coverage json has no file data (empty project?)"
                     )
-                    findings.append(
-                        Finding(
-                            rule_id="Q5",
-                            severity=Severity.MEDIUM,
-                            message=f"{qual} never executed",
-                            file=str(rel),
-                            line=line,
-                            source="quality",
+                    stdout_lines.append("")
+                    cov = None
+                if cov is not None:
+                    executed = {}
+                    for fname, fdata in cov.get("files", {}).items():
+                        executed[Path(root / fname).resolve()] = set(
+                            fdata.get("executed_lines", [])
                         )
+
+                    prod_files, _ = _py_files(root, tests_dir)
+                    total = never = 0
+                    flagged = []
+                    for p in prod_files:
+                        lines = executed.get(p.resolve())
+                        for qual, defline, b0, b1 in _def_spans(p):
+                            total += 1
+                            ran = bool(lines) and any(
+                                ln in (lines or set()) for ln in range(b0, b1 + 1)
+                            )
+                            if not ran:
+                                never += 1
+                                if (b1 - b0 + 1) >= MIN_FLAG_BODY_LINES:
+                                    flagged.append(
+                                        (
+                                            p.relative_to(root),
+                                            defline,
+                                            qual,
+                                            b1 - b0 + 1,
+                                        )
+                                    )
+                    pct = 100.0 * (total - never) / total if total else 100.0
+                    counts["MEDIUM"] += len(flagged)
+                    stdout_lines.append(
+                        f"  {total} defs scanned; {total - never} executed under tests "
+                        f"({pct:.1f}%); {never} never ran ({len(flagged)} flagged)"
                     )
+                    for rel, def_ln, qual, size in sorted(flagged, key=lambda x: -x[3])[
+                        :25
+                    ]:
+                        stdout_lines.append(
+                            f"    {str(rel):44} :{def_ln:<5} {qual}  ({size} lines)"
+                        )
+                        findings.append(
+                            Finding(
+                                rule_id="Q5",
+                                severity=Severity.MEDIUM,
+                                message=f"{qual} never executed",
+                                file=str(rel),
+                                line=def_ln,
+                                source="quality",
+                            )
+                        )
             stdout_lines.append("")
 
     # Q6: docstring coverage
@@ -617,15 +660,15 @@ def run(
     )
     stdout_lines.append("=" * 74)
     counts["MEDIUM"] += len(hygiene_findings)
-    for p, line, msg in hygiene_findings[:20]:
-        stdout_lines.append(f"  {p.relative_to(root)}:{line}  {msg}")
+    for p, h_ln, msg in hygiene_findings[:20]:
+        stdout_lines.append(f"  {p.relative_to(root)}:{h_ln}  {msg}")
         findings.append(
             Finding(
                 rule_id="Q7",
                 severity=Severity.MEDIUM,
                 message=msg,
                 file=str(p.relative_to(root)),
-                line=line,
+                line=h_ln,
                 source="quality",
             )
         )

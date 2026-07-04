@@ -30,6 +30,21 @@ def _args(**overrides) -> argparse.Namespace:
         "junit": "",
         "profile": "",
         "config": "",
+        "high": True,
+        "medium": False,
+        "info": False,
+        "all": False,
+        "verbose": False,
+        "syntax": False,
+        "wiring": False,
+        "phd": False,
+        "runtime": False,
+        "suite": False,
+        "quality": False,
+        "tests": False,
+        "python": False,
+        "lint": False,
+        "black": False,
     }
     base.update(overrides)
     return argparse.Namespace(**base)

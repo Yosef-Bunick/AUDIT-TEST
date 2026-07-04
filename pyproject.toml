@@ -12,6 +12,8 @@ readme = "README.md"
 
 [project.scripts]
 audit-code = "audit_code.cli:main"
+audit-test = "audit_code.cli:main"
+audit-tests = "audit_code.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

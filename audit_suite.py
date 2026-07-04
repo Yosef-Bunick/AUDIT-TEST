@@ -106,7 +106,7 @@ def _parse(output: str, returncode: int) -> dict:
     failures = []  # (kind, nodeid)
     for m in FAILED_RE.finditer(output):
         failures.append((m.group(1), m.group(2)))
-    skips = Counter()
+    skips: "Counter[str]" = Counter()
     for m in SKIP_RE.finditer(output):
         skips[m.group(2).strip()] += int(m.group(1))
     return {

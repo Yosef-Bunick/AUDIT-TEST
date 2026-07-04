@@ -9,6 +9,8 @@ Order:
   5. Optional --profile checks.
 """
 
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -20,14 +22,21 @@ from audit_code.models import AuditResult, AuditStatus
 from audit_code.profiles import load as profile_load
 
 
-def run_suite(
+def run_suite(  # audit: ok  (orchestrator — dispatches all audit phases)
     target_root: Path,
     mode: str = "default",
     fix: bool = False,
     profile: str = "",
     config: dict | None = None,
+    severity: str | None = "HIGH",
+    verbose: bool = False,
+    modules: set[str] | None = None,
 ) -> list[AuditResult]:
-    """Run the full audit suite against a target project."""
+    """Run the full audit suite against a target project.
+
+    modules: if set, only run these checks. Values: syntax, wiring, phd,
+             runtime, suite, quality, tests. None = all (mode logic).
+    """
     results: list[AuditResult] = []
     start = time.monotonic()
 
@@ -42,17 +51,22 @@ def run_suite(
         "  languages: " + (", ".join(a.language for a in adapters) or "none detected")
     )
 
-    # 1. Per-language syntax audits
-    for adapter in adapters:
-        _run_step(
-            results,
-            adapter.audit_id(),
-            f"{adapter.language} syntax",
-            lambda a=adapter: a.syntax_check(target_root),
-        )
+    # 1. Per-language syntax audits (skip if modules set and syntax/python not requested)
+    if modules is None or "syntax" in modules or "python" in modules:
+        for adapter in adapters:
+            # --python: only run python syntax, skip everything else
+            if modules is not None and "syntax" not in modules and "python" in modules:
+                if adapter.language != "python":
+                    continue
+            _run_step(
+                results,
+                adapter.audit_id(),
+                f"{adapter.language} syntax",
+                lambda a=adapter: a.syntax_check(target_root),
+            )
 
     # 2. Native test suites for non-Python (Python's `suite` audit covers it)
-    if mode != "min":
+    if mode != "min" and (modules is None or "tests" in modules):
         for adapter in adapters:
             if adapter.language == "python":
                 continue
@@ -71,27 +85,41 @@ def run_suite(
     # 3. Python deep audits
     python_detected = any(a.language == "python" for a in adapters)
     if python_detected:
-        audit_modules = [
+        all_audits = [
             ("wiring", "Is it connected?"),
             ("phd", "Does it meet the bar?"),
             ("runtime", "Will it hang or crash?"),
             ("suite", "Is the test suite healthy?"),
             ("quality", "External gates + execution proof"),
+            ("lint", "ruff lint"),
+            ("black", "black format"),
         ]
-        if mode == "min":
-            # Fast mode: wiring + quality only (skip slow suite/coverage runs)
-            audit_modules = [
-                ("wiring", "Is it connected?"),
-                ("quality", "External gates (fast checks only)"),
-            ]
+        fast_audits = [
+            ("wiring", "Is it connected?"),
+            ("phd", "Does it meet the bar?"),
+            ("quality", "External gates (fast checks only)"),
+        ]
+
+        if modules is not None:
+            # User picked specific modules — run exactly those
+            audit_modules = [(n, d) for n, d in all_audits if n in modules]
+        elif mode == "min":
+            audit_modules = fast_audits
+        else:
+            audit_modules = all_audits
+
         for module_name, description in audit_modules:
             _run_step(
                 results,
                 module_name,
                 description,
-                lambda m=module_name: _run_one_module(target_root, m, mode, fix),
+                lambda m=module_name: _run_one_module(
+                    target_root, m, mode, fix, severity
+                ),
             )
-    else:
+    elif modules is None or any(
+        m in modules for m in ("wiring", "phd", "runtime", "suite", "quality")
+    ):
         skip = AuditResult(
             audit_id="python-audits",
             status=AuditStatus.SKIP,
@@ -134,7 +162,7 @@ def run_suite(
     print("=" * 60)
     print(f"Total: {total}s   mode: {mode}")
 
-    if mode == "full":
+    if mode == "full" or verbose:
         for r in results:
             if r.stdout:
                 print(f"\n{'#' * 74}\n# {r.audit_id}\n{'#' * 74}")
@@ -190,7 +218,11 @@ def _run_test_suite(target_root: Path, language: str, cmd: list) -> AuditResult:
 
 
 def _run_one_module(
-    target_root: Path, module_name: str, mode: str, fix: bool = False
+    target_root: Path,
+    module_name: str,
+    mode: str,
+    fix: bool = False,
+    severity: str | None = "HIGH",
 ) -> AuditResult:
     """Run one Python audit module via direct import."""
 
@@ -204,6 +236,9 @@ def _run_one_module(
 
     mod = module_map.get(module_name)
     if mod is None:
+        # Standalone tools: lint, black
+        if module_name in ("lint", "black"):
+            return _run_standalone_tool(target_root, module_name, fix)
         return AuditResult(
             audit_id=module_name,
             status=AuditStatus.ERROR,
@@ -223,8 +258,56 @@ def _run_one_module(
         kwargs["fast"] = True  # skip coverage in min mode
     if module_name == "quality" and fix:
         kwargs["fix"] = True
+    if module_name == "phd":
+        kwargs["severity"] = severity  # type: ignore[assignment]
 
     return run_fn(target_root, **kwargs)
+
+
+def _run_standalone_tool(target_root: Path, tool: str, fix: bool) -> AuditResult:
+    """Run black or ruff as a standalone tool."""
+
+    exe_name = "ruff" if tool == "lint" else "black"
+    exe = shutil.which(exe_name)
+    if not exe:
+        return AuditResult(
+            audit_id=tool,
+            status=AuditStatus.SKIP,
+            stdout=f"{exe_name} not installed (pip install {exe_name})",
+        )
+
+    if tool == "black":
+        cmd = [exe, "."] if fix else [exe, "--check", "."]
+    else:  # lint (ruff)
+        cmd = [
+            exe,
+            "check",
+            ".",
+            "--select",
+            "E,F,W,I,B,S",
+            "--ignore",
+            "S101,S105,S110,S112,S603,S607,B007,B023,B905,E501",
+        ]
+        if fix:
+            cmd.append("--fix")
+
+    try:
+        proc = subprocess.run(
+            cmd, cwd=str(target_root), capture_output=True, text=True, timeout=120
+        )
+    except subprocess.TimeoutExpired:
+        return AuditResult(
+            audit_id=tool, status=AuditStatus.CRASH, stderr="timed out after 120s"
+        )
+
+    out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    status = AuditStatus.PASS if proc.returncode == 0 else AuditStatus.FAIL
+    return AuditResult(
+        audit_id=tool,
+        status=status,
+        stdout=out.strip(),
+        high=0 if status == AuditStatus.PASS else 1,
+    )
 
 
 def _status_char(status: AuditStatus) -> str:

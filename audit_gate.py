@@ -94,7 +94,8 @@ def _changed_files() -> tuple[dict, list]:
     """{repo-relative path -> set(changed new-side line numbers) | None=all},
     plus deleted paths. Untracked files map to None (every line is new)."""
     rc, out = _run(["git", "status", "--porcelain"], ROOT)
-    changed, deleted = {}, []
+    changed: dict[str, set[int] | None] = {}
+    deleted: list[str] = []
     for line in out.splitlines():
         if len(line) < 4:
             continue
@@ -120,7 +121,7 @@ def _changed_files() -> tuple[dict, list]:
     # hunk line ranges for tracked modifications
     for path in [p for p, v in changed.items() if v == set()]:
         rc, out = _run(["git", "diff", "-U0", "HEAD", "--", path], ROOT)
-        lines = set()
+        lines: set[int] = set()
         for m in re.finditer(
             r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", out, re.MULTILINE
         ):
@@ -215,22 +216,22 @@ def _mutation_sites(tree: ast.AST, lines) -> list:
         if ln is None or (lines is not None and ln not in lines):
             continue
         if isinstance(node, ast.Compare) and type(node.ops[0]) in _CMP_SWAP:
-            sites.append(("cmp", node))
+            sites.append(("cmp", node))  # type: ignore[arg-type]
         elif isinstance(node, ast.BoolOp):
-            sites.append(("bool", node))
+            sites.append(("bool", node))  # type: ignore[arg-type]
         elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)):
-            sites.append(("arith", node))
+            sites.append(("arith", node))  # type: ignore[arg-type]
         elif (isinstance(node, ast.Constant) and node.value is True) or (
             isinstance(node, ast.Constant) and node.value is False
         ):
-            sites.append(("flip", node))
+            sites.append(("flip", node))  # type: ignore[arg-type]
         elif (
             isinstance(node, ast.Constant)
             and isinstance(node.value, int)
             and not isinstance(node.value, bool)
             and 0 < abs(node.value) < 1000
         ):
-            sites.append(("offby1", node))
+            sites.append(("offby1", node))  # type: ignore[arg-type]
     return sites
 
 
@@ -262,7 +263,7 @@ def _tests_referencing(shadow: Path, module_stem: str) -> list:
 
 
 def g4_mutation(shadow: Path, changed: dict, defs: list, kill_pct: int):
-    per_file = {}
+    per_file: dict[str, set[int]] = {}
     for rel, qual, defline, b0, b1 in defs:
         per_file.setdefault(rel, set()).update(range(b0, b1 + 1))
     mutants = []

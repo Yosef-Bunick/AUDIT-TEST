@@ -33,10 +33,16 @@
   and profile wiring — encoding every manual check run after changes
 - Q7 regression guard: quality audit against project with `tests/` dir catches
   hygiene-loop crashes invisible to projects without one
+- Adapters now respect project `.audit-test-ignore` — `detect()` and `collect_files()`
+  load project-local excludes and pass to `iter_source_files()` for walk pruning
 
 ### Fixed
 - Quality Q7 hygiene loop `NameError` (`py_file` undefined in loop using `p`) —
   triggered only when `tests/` exists in the target project
+- Quality `_py_files` now uses `os.walk` with dirname pruning instead of `rglob` —
+  eliminates 30s+ timeouts on projects with large non-Python directories
+- Quality `EXCLUDE_DIRS` expanded with common project subdirs (bunick-ai-desktop,
+  logs, eval_results, golden_tasks, fixes and info, .vscode, .idea)
 - Language detection missed source files at the project root (only
   subdirectories were scanned); Python detection stopped at the first
   non-venv directory regardless of match
