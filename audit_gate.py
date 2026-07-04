@@ -161,13 +161,16 @@ def _drop_shadow(shadow: Path):
     shutil.rmtree(shadow.parent, ignore_errors=True)
 
 
-def _static_high(cwd: Path) -> dict:
+def _static_high(cwd: Path, min_severity: str | None = None) -> dict:
     """{audit: (high_count, completed)}. FAIL-CLOSED: an audit that crashed or
     never printed a summary is (0, False) — the gate must treat that as a
     failure, never as zero findings."""
     counts = {}
     for script in STATIC_AUDITS:
-        rc, out = _run([sys.executable, str(cwd / script)], cwd, timeout=300)
+        cmd = [sys.executable, str(cwd / script)]
+        if min_severity:
+            cmd.append(f"--min-severity={min_severity}")
+        rc, out = _run(cmd, cwd, timeout=300)
         matches = list(HIGH_RE.finditer(out))
         total = sum(int(m.group(1) or m.group(2) or 0) for m in matches)
         completed = rc in (0, 1) and bool(matches)
@@ -448,7 +451,9 @@ def _run_g2_g3(shadow, changed, verdicts):
     return defs
 
 
-def _run_gates(shadow: Path, changed: dict, args) -> dict:
+def _run_gates(
+    shadow: Path, changed: dict, args, severity: str | None = "HIGH"
+) -> dict:
     """G1 static regression + G2 suite + G3 execution proof + G4 mutation."""
     verdicts = {}
     try:
@@ -463,14 +468,14 @@ def _run_gates(shadow: Path, changed: dict, args) -> dict:
                 ROOT,
                 timeout=120,
             )
-            base = _static_high(head_shadow)
+            base = _static_high(head_shadow, severity)
             subprocess.run(
                 ["git", "worktree", "remove", "--force", str(head_shadow)],
                 cwd=str(ROOT),
                 capture_output=True,
                 timeout=60,
             )
-            now = _static_high(shadow)
+            now = _static_high(shadow, severity)
             crashed = [k for k, (_, done) in now.items() if not done]
             regressions = {
                 k: (base.get(k, (0, True))[0], v)
@@ -527,7 +532,15 @@ def main():
     ap.add_argument("--fast", action="store_true", help="skip G4 mutation")
     ap.add_argument("--no-static", action="store_true", help="skip G1 baseline diff")
     ap.add_argument("--kill", type=int, default=60, help="required mutant kill %%")
+    ap.add_argument(
+        "--high", action="store_true", help="only HIGH severity in G1 (default)"
+    )
+    ap.add_argument("--medium", action="store_true", help="HIGH + MEDIUM in G1")
+    ap.add_argument("--info", action="store_true", help="HIGH + MEDIUM + INFO in G1")
+    ap.add_argument("--verbose", "-v", action="store_true", help="full detail output")
     args = ap.parse_args()
+
+    severity = None if args.info else ("MEDIUM" if args.medium else "HIGH")
 
     changed, deleted = _changed_files()
     py_changed = [p for p in changed if p.endswith(".py")]
@@ -560,7 +573,7 @@ def main():
     if syntax_errors:
         print("G0 FAILED - changed files do not parse; later gates would be blind")
     shadow = _make_shadow(changed, deleted)
-    verdicts.update(_run_gates(shadow, changed, args))
+    verdicts.update(_run_gates(shadow, changed, args, severity))
 
     print("\n" + "=" * 74)
     print("GATE VERDICT")

@@ -68,7 +68,7 @@ def build_audit_parser() -> argparse.ArgumentParser:
         help="Fast local checks: wiring + phd + quality",
     )
     parser.add_argument(
-        "--full",
+        "-F", "--full",
         action="store_true",
         help="Complete analysis: all checks + full raw output",
     )
@@ -84,7 +84,7 @@ def build_audit_parser() -> argparse.ArgumentParser:
         help="Print findings but always exit 0",
     )
     parser.add_argument(
-        "--fix",
+        "-f", "--fix",
         action="store_true",
         help="Auto-format: run black + ruff --fix (modifies files)",
     )
@@ -121,8 +121,8 @@ def build_audit_parser() -> argparse.ArgumentParser:
 
     # --- severity level (mutually exclusive) ---
     sev = parser.add_mutually_exclusive_group()
-    sev.add_argument("--high", action="store_true", help="Only HIGH severity (default)")
-    sev.add_argument("--medium", action="store_true", help="HIGH + MEDIUM severity")
+    sev.add_argument("-H", "--high", action="store_true", help="Only HIGH severity (default)")
+    sev.add_argument("-m", "--medium", action="store_true", help="HIGH + MEDIUM severity")
     sev.add_argument("--info", action="store_true", help="HIGH + MEDIUM + INFO")
     sev.add_argument("--all", action="store_true", help="All findings (same as --info)")
 
@@ -173,6 +173,15 @@ def build_gate_parser() -> argparse.ArgumentParser:
         default=60,
         metavar="PCT",
         help="Required mutant kill percentage (default: 60)",
+    )
+    sev = parser.add_mutually_exclusive_group()
+    sev.add_argument(
+        "--high", action="store_true", help="Only HIGH severity in G1 (default)"
+    )
+    sev.add_argument("--medium", action="store_true", help="HIGH + MEDIUM in G1")
+    sev.add_argument("--info", action="store_true", help="All findings in G1")
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Full detail output"
     )
     return parser
 

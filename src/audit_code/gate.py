@@ -16,7 +16,12 @@ _SCRIPT = Path(__file__).resolve().parent.parent.parent / "audit_gate.py"
 
 
 def run_gate(
-    target_root: Path, fast: bool = False, no_static: bool = False, kill_pct: int = 60
+    target_root: Path,
+    fast: bool = False,
+    no_static: bool = False,
+    kill_pct: int = 60,
+    severity: str | None = "HIGH",
+    verbose: bool = False,
 ) -> int:
     """Run the change gate. Returns exit code (0=pass, 1=fail, 2=nothing to judge)."""
     cmd = [
@@ -31,6 +36,12 @@ def run_gate(
         cmd.append("--fast")
     if no_static:
         cmd.append("--no-static")
+    if severity == "MEDIUM":
+        cmd.append("--medium")
+    elif severity is None:
+        cmd.append("--info")
+    if verbose:
+        cmd.append("--verbose")
 
     proc = subprocess.run(
         cmd,

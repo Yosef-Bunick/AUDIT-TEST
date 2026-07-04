@@ -33,22 +33,22 @@ pip install -e .
 ```powershell
 audit-test                    # full audit on current directory
 audit-test --min              # fast: wiring + phd + quality (seconds)
-audit-test --full             # complete: all checks + raw output
-audit-test --fix              # auto-format: black + ruff --fix (~1s)
-audit-test --path <dir>       # audit a specific project
+audit-test -F                 # complete: all checks + raw output
+audit-test -f                 # auto-format: black + ruff --fix (~1s)
+audit-test -p <dir>           # audit a specific project
 audit-test --report-only      # print findings, always exit 0
 audit-test --json results.json   # write JSON report
 audit-test --sarif results.sarif # write SARIF (GitHub code scanning)
 audit-test --junit results.xml   # write JUnit (CI dashboards)
 audit-test --profile agent-engine  # enable Agent Engine profile
-audit-test --help             # show all options
+audit-test -h                 # show all options
 ```
 
 ### Severity filtering
 
 ```powershell
-audit-test --high             # only HIGH severity (default)
-audit-test --medium           # HIGH + MEDIUM severity
+audit-test -H                 # only HIGH severity (default)
+audit-test -m                 # HIGH + MEDIUM severity
 audit-test --info             # HIGH + MEDIUM + INFO
 audit-test --all              # all findings (same as --info)
 ```
@@ -56,8 +56,8 @@ audit-test --all              # all findings (same as --info)
 ### Verbosity
 
 ```powershell
-audit-test --verbose          # full detail output for every audit step
-audit-test --phd --high -v    # PHD only, HIGH only, full detail
+audit-test -v                 # full detail output for every audit step
+audit-test --phd -H -v        # PHD only, HIGH only, full detail
 ```
 
 ### Per-module selection
@@ -85,9 +85,10 @@ audit-test --suite --quality         # test suite + quality gates
 
 ```powershell
 audit-test gate               # judge working-tree diff vs HEAD
+audit-test gate -H            # block on new HIGH findings (default)
+audit-test gate -m            # block on new HIGH+MEDIUM
 audit-test gate --fast        # skip mutation (G4)
-audit-test gate --kill 80     # raise mutation bar (default 60%)
-audit-test gate --path <dir>  # gate a specific project
+audit-test gate -p <dir>      # gate a specific project
 ```
 
 ### Standalone scripts
