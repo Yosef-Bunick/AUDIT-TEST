@@ -41,6 +41,8 @@ ALL_MODULES = {
     "python",
     "lint",
     "black",
+    "semgrep",
+    "bandit",
 }
 
 
@@ -76,6 +78,11 @@ def build_audit_parser() -> argparse.ArgumentParser:
         "--full",
         action="store_true",
         help="Complete analysis: all checks + full raw output",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Skip slow checks (coverage, mutation)",
     )
     parser.add_argument(
         "--strict",
@@ -161,6 +168,12 @@ def build_audit_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--lint", action="store_true", help="Run ruff lint only")
     parser.add_argument("--black", action="store_true", help="Run black format only")
+    parser.add_argument(
+        "--semgrep", action="store_true", help="Run semgrep security scan"
+    )
+    parser.add_argument(
+        "--bandit", action="store_true", help="Run bandit security scan"
+    )
     parser.add_argument(
         "-s",
         "--skip",
@@ -265,6 +278,7 @@ def run_audit(args: argparse.Namespace) -> int:
         severity=severity,
         verbose=args.verbose,
         modules=modules,
+        fast=args.fast if hasattr(args, "fast") else False,
     )
 
     reporting_cfg = cfg.get("reporting", {})
@@ -331,6 +345,8 @@ def _expand_bare_words() -> None:
         "tests": "--tests",
         "lint": "--lint",
         "black": "--black",
+        "semgrep": "--semgrep",
+        "bandit": "--bandit",
         # module shortcuts
         "q": "--quality",
         "w": "--wiring",
@@ -357,6 +373,7 @@ def _expand_bare_words() -> None:
         "m": "--medium",
         "v": "--verbose",
         "F": "--full",
+        "fast": "--fast",
     }
     new_argv = [sys.argv[0]]
     prev_was_value_flag = False

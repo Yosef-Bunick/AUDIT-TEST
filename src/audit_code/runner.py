@@ -22,7 +22,7 @@ from audit_code.models import AuditResult, AuditStatus
 from audit_code.profiles import load as profile_load
 
 
-def run_suite(  # audit: ok  (orchestrator — dispatches all audit phases)
+def run_suite(
     target_root: Path,
     mode: str = "default",
     fix: bool = False,
@@ -31,6 +31,7 @@ def run_suite(  # audit: ok  (orchestrator — dispatches all audit phases)
     severity: str | None = "HIGH",
     verbose: bool = False,
     modules: set[str] | None = None,
+    fast: bool = False,
 ) -> list[AuditResult]:
     """Run the full audit suite against a target project.
 
@@ -93,6 +94,8 @@ def run_suite(  # audit: ok  (orchestrator — dispatches all audit phases)
             ("quality", "External gates + execution proof"),
             ("lint", "ruff lint"),
             ("black", "black format"),
+            ("semgrep", "semgrep security scan"),
+            ("bandit", "bandit security scan"),
         ]
         fast_audits = [
             ("wiring", "Is it connected?"),
@@ -114,7 +117,7 @@ def run_suite(  # audit: ok  (orchestrator — dispatches all audit phases)
                 module_name,
                 description,
                 lambda m=module_name: _run_one_module(
-                    target_root, m, mode, fix, severity
+                    target_root, m, mode, fix, severity, fast
                 ),
             )
     elif modules is None or any(
@@ -223,6 +226,7 @@ def _run_one_module(
     mode: str,
     fix: bool = False,
     severity: str | None = "HIGH",
+    fast: bool = False,
 ) -> AuditResult:
     """Run one Python audit module via direct import."""
 
@@ -234,17 +238,22 @@ def _run_one_module(
         "quality": quality,
     }
 
-    mod = module_map.get(module_name)
-    if mod is None:
-        # Standalone tools: lint, black
-        if module_name in ("lint", "black"):
-            return _run_standalone_tool(target_root, module_name, fix)
-        return AuditResult(
-            audit_id=module_name,
-            status=AuditStatus.ERROR,
-            stderr=f"Unknown audit module: {module_name}",
-        )
+    # standalone tools
+    if module_name in ("lint", "black"):
+        return _run_standalone_tool(target_root, module_name, fix)
 
+    # integrations
+    if module_name == "semgrep":
+        from audit_code.integrations import semgrep
+
+        return semgrep.run(target_root)
+
+    if module_name == "bandit":
+        from audit_code.integrations import bandit
+
+        return bandit.run(target_root)
+
+    mod = module_map.get(module_name)
     run_fn = getattr(mod, "run", None)
     if run_fn is None:
         return AuditResult(
@@ -254,8 +263,8 @@ def _run_one_module(
         )
 
     kwargs = {}
-    if module_name == "quality" and mode == "min":
-        kwargs["fast"] = True  # skip coverage in min mode
+    if module_name == "quality" and (mode == "min" or fast):
+        kwargs["fast"] = True  # skip coverage
     if module_name == "quality" and fix:
         kwargs["fix"] = True
     if module_name == "phd":

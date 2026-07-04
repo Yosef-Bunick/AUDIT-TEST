@@ -1,4 +1,4 @@
-"""Semgrep integration — real implementation."""
+"""Bandit integration — Python security scanner."""
 
 import json
 import shutil
@@ -9,28 +9,29 @@ from audit_code.models import AuditResult, AuditStatus, Finding, Severity
 
 
 def run(target_root: Path, timeout: int = 300) -> AuditResult:
-    """Run semgrep against the target project."""
-    exe = shutil.which("semgrep")
+    """Run bandit against the target project."""
+    exe = shutil.which("bandit")
     if not exe:
         return AuditResult(
-            audit_id="semgrep",
+            audit_id="bandit",
             status=AuditStatus.SKIP,
             tool_missing=True,
-            stdout="SKIP: semgrep not installed (pip install semgrep)",
+            stdout="SKIP: bandit not installed (pip install bandit)",
         )
 
     try:
         proc = subprocess.run(
             [
                 exe,
-                "scan",
-                "--config",
-                "p/python",
-                "--json",
-                "--quiet",
-                "--metrics",
-                "off",
+                "-r",
                 ".",
+                "-f",
+                "json",
+                "-q",
+                "--severity-level",
+                "medium",
+                "--exclude",
+                ".venv,venv,node_modules,.git,__pycache__,dist,build,./tests",
             ],
             capture_output=True,
             text=True,
@@ -39,7 +40,7 @@ def run(target_root: Path, timeout: int = 300) -> AuditResult:
         )
     except subprocess.TimeoutExpired:
         return AuditResult(
-            audit_id="semgrep",
+            audit_id="bandit",
             status=AuditStatus.CRASH,
             stderr=f"timed out after {timeout}s",
         )
@@ -47,7 +48,7 @@ def run(target_root: Path, timeout: int = 300) -> AuditResult:
     out = (proc.stdout or "").strip()
     if proc.returncode not in (0, 1):
         return AuditResult(
-            audit_id="semgrep",
+            audit_id="bandit",
             status=AuditStatus.CRASH,
             stderr=proc.stderr or f"exit {proc.returncode}",
         )
@@ -60,14 +61,18 @@ def run(target_root: Path, timeout: int = 300) -> AuditResult:
             data = json.loads(out)
         except json.JSONDecodeError:
             return AuditResult(
-                audit_id="semgrep",
+                audit_id="bandit",
                 status=AuditStatus.ERROR,
-                stderr="could not parse semgrep JSON output",
+                stderr="could not parse bandit JSON output",
             )
 
         for r in data.get("results", []):
-            sev_map = {"ERROR": Severity.HIGH, "WARNING": Severity.MEDIUM}
-            sev = sev_map.get(r.get("extra", {}).get("severity", ""), Severity.INFO)
+            sev_map = {
+                "HIGH": Severity.HIGH,
+                "MEDIUM": Severity.MEDIUM,
+                "LOW": Severity.INFO,
+            }
+            sev = sev_map.get(r.get("issue_severity", ""), Severity.INFO)
             if sev == Severity.HIGH:
                 high += 1
             elif sev == Severity.MEDIUM:
@@ -77,12 +82,12 @@ def run(target_root: Path, timeout: int = 300) -> AuditResult:
 
             findings.append(
                 Finding(
-                    rule_id=r.get("check_id", "semgrep"),
+                    rule_id=r.get("test_id", "bandit"),
                     severity=sev,
-                    message=r.get("extra", {}).get("message", ""),
-                    file=r.get("path", ""),
-                    line=r.get("start", {}).get("line"),
-                    source="semgrep",
+                    message=r.get("issue_text", ""),
+                    file=r.get("filename", ""),
+                    line=r.get("line_number"),
+                    source="bandit",
                 )
             )
 
@@ -92,12 +97,30 @@ def run(target_root: Path, timeout: int = 300) -> AuditResult:
         else (AuditStatus.WARN if (medium or info) else AuditStatus.PASS)
     )
 
+    lines = [
+        f"{len(findings)} finding(s) — {high} HIGH, {medium} MEDIUM, {info} INFO",
+        "",
+    ]
+    for f in sorted(
+        findings,
+        key=lambda x: (
+            (
+                0
+                if x.severity == Severity.HIGH
+                else 1 if x.severity == Severity.MEDIUM else 2
+            ),
+            x.file or "",
+        ),
+    ):
+        lines.append(
+            f"  [{f.severity.value:6}] {f.rule_id:10} {f.file}:{f.line or '-'}  {f.message[:100]}"
+        )
     return AuditResult(
-        audit_id="semgrep",
+        audit_id="bandit",
         status=status,
         findings=findings,
         high=high,
         medium=medium,
         info=info,
-        stdout=out[:5000] if out else "no findings",
+        stdout="\n".join(lines[:200]),  # cap at 200 lines to avoid flooding
     )
