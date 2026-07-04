@@ -57,9 +57,12 @@ def build_audit_parser() -> argparse.ArgumentParser:
         description="Code and test verification orchestrator.",
         add_help=False,
     )
-    parser.add_argument("-H", "--help", action="help", help="show this help message and exit")
     parser.add_argument(
-        "-p", "--path",
+        "-H", "--help", action="help", help="show this help message and exit"
+    )
+    parser.add_argument(
+        "-p",
+        "--path",
         default=None,
         help="Path to project to audit (default: current directory)",
     )
@@ -135,7 +138,8 @@ def build_audit_parser() -> argparse.ArgumentParser:
 
     # --- verbosity ---
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Full detail output for every audit step",
     )
@@ -220,6 +224,7 @@ def _resolve_modules(args: argparse.Namespace) -> set[str] | None:
         return selected
     if args.skip:
         import re
+
         skip_set = {s.strip() for s in re.split(r"[, ]+", args.skip) if s.strip()}
         result = ALL_MODULES - skip_set
         # --min further restricts: skip runtime + suite (slow checks)
@@ -306,16 +311,27 @@ def _expand_bare_words() -> None:
     """Convert bare words like 'phd high fix' into '--phd --high --fix'."""
     WORD_MAP = {
         # modules
-        "syntax": "--syntax", "python": "--python",
-        "wiring": "--wiring", "phd": "--phd",
-        "runtime": "--runtime", "suite": "--suite",
-        "quality": "--quality", "tests": "--tests",
-        "lint": "--lint", "black": "--black",
+        "syntax": "--syntax",
+        "python": "--python",
+        "wiring": "--wiring",
+        "phd": "--phd",
+        "runtime": "--runtime",
+        "suite": "--suite",
+        "quality": "--quality",
+        "tests": "--tests",
+        "lint": "--lint",
+        "black": "--black",
         # severity
-        "high": "--high", "medium": "--medium", "info": "--info", "all": "--all",
+        "high": "--high",
+        "medium": "--medium",
+        "info": "--info",
+        "all": "--all",
         # modes
-        "fix": "--fix", "full": "--full", "min": "--min",
-        "verbose": "--verbose", "strict": "--strict",
+        "fix": "--fix",
+        "full": "--full",
+        "min": "--min",
+        "verbose": "--verbose",
+        "strict": "--strict",
         "report": "--report-only",
     }
     new_argv = [sys.argv[0]]
