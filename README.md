@@ -59,9 +59,12 @@ audit-test -s "suite lint"    # skip suite + lint
 | `-v` | `--verbose` | full detail output |
 | `-f` | `--fix` | auto-format |
 | `-F` | `--full` | complete analysis |
+| | `--fast` | skip slow checks (coverage, mutation) |
 | `-p` | `--path` | project directory |
 | `-s` | `--skip` | skip modules (comma/space) |
 | `-H` | `--help` | show help |
+| | `--semgrep` | semgrep security scan |
+| | `--bandit` | bandit security scan |
 
 ### Modules
 
@@ -78,6 +81,8 @@ audit-test python             # Python syntax only
 audit-test tests              # non-Python test suites
 audit-test lint               # ruff check
 audit-test black              # black format
+audit-test semgrep            # semgrep security scan
+audit-test bandit             # bandit security scan
 audit-test lint fix           # ruff --fix
 audit-test black fix          # black format
 audit-test phd wiring medium  # mix any modules + severity
