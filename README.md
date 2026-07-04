@@ -6,6 +6,13 @@ Interrogates the quality of a repo's code *and* its tests — answers the hard
 question: **does the code work, do the tests prove it, and did my change
 break anything?**
 
+<p align="center">
+  <a href="#install"><img src="https://img.shields.io/badge/%F0%9F%9B%A0%EF%B8%8F-Build_Instructions-f7a800" alt="Build Instructions"></a>
+  <a href="#usage"><img src="https://img.shields.io/badge/%F0%9F%93%90-Usage-7dd3a8" alt="Usage"></a>
+  <a href="#the-stack"><img src="https://img.shields.io/badge/%E2%9A%99%EF%B8%8F-How_It_Works-7ab3ff" alt="How It Works"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/%F0%9F%93%9C-CC_BY--NC--ND_4.0-d4d4d4" alt="License"></a>
+</p>
+
 ## Install
 
 ```powershell
