@@ -59,8 +59,7 @@ def build_audit_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-H", "--help", action="help", help="show this help message and exit")
     parser.add_argument(
-        "--path",
-        "-p",
+        "-p", "--path",
         default=None,
         help="Path to project to audit (default: current directory)",
     )
@@ -136,8 +135,7 @@ def build_audit_parser() -> argparse.ArgumentParser:
 
     # --- verbosity ---
     parser.add_argument(
-        "--verbose",
-        "-v",
+        "-v", "--verbose",
         action="store_true",
         help="Full detail output for every audit step",
     )
