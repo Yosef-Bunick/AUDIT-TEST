@@ -225,7 +225,17 @@ def _resolve_modules(args: argparse.Namespace) -> set[str] | None:
     if args.skip:
         import re
 
-        skip_set = {s.strip() for s in re.split(r"[, ]+", args.skip) if s.strip()}
+        _MODULE_SHORT = {
+            "q": "quality",
+            "w": "wiring",
+            "p": "phd",
+            "r": "runtime",
+            "s": "suite",
+            "l": "lint",
+            "b": "black",
+        }
+        raw = {s.strip() for s in re.split(r"[, ]+", args.skip) if s.strip()}
+        skip_set = {_MODULE_SHORT.get(x, x) for x in raw}
         result = ALL_MODULES - skip_set
         # --min further restricts: skip runtime + suite (slow checks)
         if args.min:
