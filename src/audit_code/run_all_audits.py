@@ -25,18 +25,19 @@ The suite (each script documents its own checks):
                       at any repo via --path/--tests; tools degrade to skip.
 """
 
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 AUDITS = [
-    "audit/audit_wiring.py",
-    "audit/audit_phd.py",
-    "audit/audit_runtime.py",
-    "audit/audit_suite.py",
-    "audit/audit_quality.py",
+    os.path.join("src", "audit_code", "audit_wiring.py"),
+    os.path.join("src", "audit_code", "audit_phd.py"),
+    os.path.join("src", "audit_code", "audit_runtime.py"),
+    os.path.join("src", "audit_code", "audit_suite.py"),
+    os.path.join("src", "audit_code", "audit_quality.py"),
 ]
 
 # summary-line extractors per audit output style

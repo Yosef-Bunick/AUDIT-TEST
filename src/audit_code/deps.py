@@ -15,7 +15,7 @@ from audit_code.models import (
     AuditStatus,
 )
 
-_SCRIPT = Path(__file__).resolve().parent.parent.parent / "deps.py"
+_SCRIPT = Path(__file__).resolve().parent / "audit_deps.py"
 
 
 def run(target_root: Path, print_only: bool = False) -> AuditResult:

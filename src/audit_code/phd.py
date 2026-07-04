@@ -14,14 +14,12 @@ from audit_code.models import (
     AuditStatus,
 )
 
-_SCRIPT = Path(__file__).resolve().parent.parent.parent / "audit_phd.py"
+_SCRIPT = Path(__file__).resolve().parent / "audit_phd.py"
 
 SUMMARY_RE = re.compile(r"SUMMARY\s+HIGH:\s*(\d+)\s+MEDIUM:\s*(\d+)\s+INFO:\s*(\d+)")
 
 
-def run(
-    target_root: Path, strict: bool = True, severity: str | None = "HIGH"
-) -> AuditResult:
+def run(target_root: Path, severity: str | None = "HIGH") -> AuditResult:
     """Run the PhD audit against a target project.
 
     severity: "HIGH" (only HIGH), "MEDIUM" (HIGH+MEDIUM), None (all: HIGH+MEDIUM+INFO)

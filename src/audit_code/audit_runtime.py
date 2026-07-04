@@ -144,9 +144,9 @@ import re
 import sys
 from pathlib import Path
 
-from audit_shared import SKIP_PARTS
+from audit_code.audit_shared import SKIP_PARTS
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 # Allow --path override for audit-code wrapper
 for _i, _a in enumerate(sys.argv):
     if _a == "--path" and _i + 1 < len(sys.argv):

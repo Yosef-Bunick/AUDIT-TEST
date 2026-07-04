@@ -50,9 +50,9 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-from audit_config import FULL_SUITE_TIMEOUT, MAX_SOLO_RERUNS, SOLO_TIMEOUT
+from audit_code.audit_config import FULL_SUITE_TIMEOUT, MAX_SOLO_RERUNS, SOLO_TIMEOUT
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 TESTS_DIR = "tests"
 PYTEST_ARGS = ["-q", "--tb=no", "-p", "no:logfire", "-p", "no:deepeval"]
 

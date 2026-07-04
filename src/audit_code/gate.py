@@ -12,7 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-_SCRIPT = Path(__file__).resolve().parent.parent.parent / "audit_gate.py"
+_SCRIPT = Path(__file__).resolve().parent / "audit_gate.py"
 
 
 def run_gate(

@@ -200,7 +200,7 @@ def test_framework_wired_methods_heuristic():
     methods and methods of locally-based classes stay eligible."""
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
-    import audit_wiring
+    from audit_code import audit_wiring
 
     src = (
         "from html.parser import HTMLParser\n"

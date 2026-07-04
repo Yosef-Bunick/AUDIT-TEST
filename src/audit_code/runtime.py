@@ -15,7 +15,7 @@ from audit_code.models import (
     AuditStatus,
 )
 
-_SCRIPT = Path(__file__).resolve().parent.parent.parent / "audit_runtime.py"
+_SCRIPT = Path(__file__).resolve().parent / "audit_runtime.py"
 
 SUMMARY_RE = re.compile(r"SUMMARY\s+HIGH:\s*(\d+)\s+MEDIUM:\s*(\d+)\s+INFO:\s*(\d+)")
 

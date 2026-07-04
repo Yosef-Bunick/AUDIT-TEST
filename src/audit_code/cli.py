@@ -333,6 +333,12 @@ def _expand_bare_words() -> None:
         "verbose": "--verbose",
         "strict": "--strict",
         "report": "--report-only",
+        # single-letter shortcuts
+        "f": "--fix",
+        "h": "--high",
+        "m": "--medium",
+        "v": "--verbose",
+        "F": "--full",
     }
     new_argv = [sys.argv[0]]
     for arg in sys.argv[1:]:

@@ -59,10 +59,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from audit_config import DOC_THRESHOLD_PCT, MIN_FLAG_BODY_LINES, TOOL_TIMEOUT
-from audit_shared import EXCLUDE_DIRS
+from audit_code.audit_config import DOC_THRESHOLD_PCT, MIN_FLAG_BODY_LINES, TOOL_TIMEOUT
+from audit_code.audit_shared import EXCLUDE_DIRS
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def _tool(name: str) -> str | None:

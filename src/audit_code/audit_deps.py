@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 # ── Auto-detect project root (parent of the directory containing this script) ──
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 # Allow --path override for audit-code wrapper
 for _i, _a in enumerate(sys.argv):
     if _a == "--path" and _i + 1 < len(sys.argv):

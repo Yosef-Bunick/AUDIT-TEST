@@ -47,16 +47,16 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from audit_config import (
+from audit_code.audit_config import (
     MAX_MUTANTS,
     MIN_BODY_LINES,
     MUTANT_TEST_TIMEOUT,
     SUITE_TIMEOUT,
 )
-from audit_quality import _def_spans  # noqa: E402
-from audit_shared import EXCLUDE_DIRS
+from audit_code.audit_quality import _def_spans  # noqa: E402
+from audit_code.audit_shared import EXCLUDE_DIRS
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 # Allow --path override for audit-code wrapper
 for _i, _a in enumerate(sys.argv):
     if _a == "--path" and _i + 1 < len(sys.argv):
@@ -65,9 +65,9 @@ for _i, _a in enumerate(sys.argv):
 TESTS_DIR = "tests"
 PYTEST_BASE = ["-q", "--tb=no", "-p", "no:logfire"]
 STATIC_AUDITS = [
-    "audit/audit_wiring.py",
-    "audit/audit_phd.py",
-    "audit/audit_runtime.py",
+    os.path.join("src", "audit_code", "audit_wiring.py"),
+    os.path.join("src", "audit_code", "audit_phd.py"),
+    os.path.join("src", "audit_code", "audit_runtime.py"),
 ]
 
 HIGH_RE = re.compile(r"HIGH-confidence findings:\s*(\d+)|SUMMARY\s+HIGH:\s*(\d+)")
@@ -408,7 +408,7 @@ def _run_g2_g3(shadow, changed, verdicts):
             env=env,
         )
         try:
-            cov = json.loads((shadow / ".gate_cov.json").read_text())
+            cov = json.loads((shadow / ".gate_cov.json").read_text(encoding="utf-8"))
             executed, missing = {}, {}
             for fpath, d in cov.get("files", {}).items():
                 key = str(Path(fpath))
