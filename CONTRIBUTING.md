@@ -35,7 +35,7 @@ audit-test v
    ```
    cd AUDIT-TEST
    audit-test fix              # format + lint-fix
-   audit-test --skip quality   # must pass all (no quality = no WARN allowed)
+   audit-test --skip quality   # must pass all (no WARN allowed)
    audit-test q v              # quality verbose — only Q5/Q6 may WARN
    ```
 4. If a finding is intentional and necessary, suppress it with `# audit: ok` on the exact line and explain why in the commit message
