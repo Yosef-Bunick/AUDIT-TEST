@@ -18,7 +18,7 @@ pip install -e .
 Self-audit (runs tests + all checks):
 
 ```powershell
-audit-test
+audit-test v
 ```
 
 ## Workflow
