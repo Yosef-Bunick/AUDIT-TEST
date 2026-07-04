@@ -15,13 +15,7 @@ cd AUDIT-TEST
 pip install -e .
 ```
 
-Run the test suite:
-
-```powershell
-pytest tests/ -q
-```
-
-Self-audit (must pass with 0 findings):
+Self-audit (runs tests + all checks):
 
 ```powershell
 audit-test
