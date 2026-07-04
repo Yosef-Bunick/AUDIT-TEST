@@ -30,6 +30,7 @@ class Finding:
     line: int | None = None
     language: str | None = None
     source: str = ""
+    fingerprint: str = ""
     suggestion: str | None = None
 
 
@@ -69,3 +70,4 @@ EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_SETUP = 2
 EXIT_CRASH = 3
+EXIT_NO_ADAPTER = 4

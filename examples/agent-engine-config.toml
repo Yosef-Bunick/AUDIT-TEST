@@ -1,0 +1,27 @@
+# Example: Agent Engine profile config
+# Use with: audit-code --profile agent-engine
+
+[tool.audit-code.profiles.agent-engine]
+
+# Config files to check for dead keys, drift, and flow integrity
+config_files = [
+    "limits.json",
+    "model_rules.json",
+    "agent_models.json",
+    "providers.json",
+]
+
+# Prompt files — checked for {task} placeholder, JSON contract, and parity
+prompt_dir = "prompts"
+
+# Tool registry — checked for definition-vs-dispatch parity
+tool_registry = "tools/registry.py"
+
+# Agent entry modules — checked for hook-role registration
+agent_entries = [
+    "agents/",
+    "engine/",
+]
+
+# Stdout protocol — checked for __EVENT__ / __RESULT__ markers
+stdout_markers = ["__EVENT__", "__RESULT__"]

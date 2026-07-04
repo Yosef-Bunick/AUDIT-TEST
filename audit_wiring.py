@@ -285,6 +285,42 @@ def index_defs(trees):
     return defs
 
 
+def framework_wired_methods(trees):
+    """{method_name: set(paths)} for public methods of classes whose base is
+    NOT defined in this repo.
+
+    An external base class is the caller of the methods it dispatches by name
+    (HTMLParser.handle_starttag, Thread.run, unittest hooks) — zero in-repo
+    references is expected, not dead code. Same rationale as counting imports
+    as references. Private (_-prefixed) methods stay eligible for CHECK 1:
+    frameworks dispatch public API names.
+    """
+    local_classes = set()
+    for tree in trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                local_classes.add(node.name)
+    wired = collections.defaultdict(set)
+    for p, tree in trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or not node.bases:
+                continue
+            base_names = set()
+            for b in node.bases:
+                if isinstance(b, ast.Name):
+                    base_names.add(b.id)
+                elif isinstance(b, ast.Attribute):
+                    base_names.add(b.attr)
+            external = any(b not in local_classes and b != "object" for b in base_names)
+            if not external:
+                continue
+            for ch in node.body:
+                if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if not ch.name.startswith("_"):
+                        wired[ch.name].add(p)
+    return wired
+
+
 def index_refs(trees):
     """{name: set(paths that reference it in any form)}"""
     refs = collections.defaultdict(set)
@@ -818,6 +854,8 @@ def main():
     defs = index_defs(trees_prod)
     refs_prod = index_refs(trees_prod)
     refs_test = index_refs(trees_test)
+    for name, paths in framework_wired_methods(trees_prod).items():
+        refs_prod[name] |= paths
 
     high_findings = 0
 

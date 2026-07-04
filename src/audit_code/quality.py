@@ -12,6 +12,7 @@ Q8 [INFO] mutation testing (opt-in)
 
 import argparse as _argparse
 import ast
+import importlib.util
 import json
 import os
 import re
@@ -21,6 +22,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+from audit_code.config import (
+    DOC_THRESHOLD_PCT,
+    MIN_FLAG_BODY_LINES,
+    TOOL_TIMEOUT,
+)  # noqa: E402
 from audit_code.models import (
     AuditResult,
     AuditStatus,
@@ -43,14 +49,9 @@ EXCLUDE_DIRS = {
     "build",
     ".eggs",
 }
-TOOL_TIMEOUT = 600
-DOC_THRESHOLD_PCT = 70
-MIN_FLAG_BODY_LINES = 2
 
 
 def _tool(name: str, target_root: Path) -> str | None:
-    import importlib.util
-
     try:
         spec = importlib.util.find_spec(name.replace("-", "_"))
         if spec is not None:
@@ -61,8 +62,11 @@ def _tool(name: str, target_root: Path) -> str | None:
                 # If inside target_root but under .venv/ or venv/, it's a
                 # legitimate installed package, not a project shadow.
                 in_venv = any(p in (".venv", "venv") for p in origin_path.parts)
-                if not origin_path.is_relative_to(target_root) or in_venv:
-                    return f"{sys.executable} -m {name.replace('-', '_')}"
+                if origin:
+                    origin_path = Path(origin).resolve()
+                    in_venv = any(p in (".venv", "venv") for p in origin_path.parts)
+                    if not origin_path.is_relative_to(target_root) or in_venv:
+                        return f"{sys.executable} -m {name.replace('-', '_')}"
     except (ImportError, ValueError):
         pass
     return shutil.which(name)
@@ -91,10 +95,14 @@ def _run(
 
 def _py_files(root: Path, tests_dir: Path) -> tuple[list[Path], list[Path]]:
     prod, tests = [], []
-    for p in root.rglob("*.py"):
-        if any(part in EXCLUDE_DIRS for part in p.parts):
+    for py_file in root.rglob("*.py"):
+        if any(part in EXCLUDE_DIRS for part in py_file.parts):
             continue
-        (tests if tests_dir in p.parents or p.parent == tests_dir else prod).append(p)
+        (
+            tests
+            if tests_dir in py_file.parents or py_file.parent == tests_dir
+            else prod
+        ).append(py_file)
     return prod, tests
 
 
@@ -137,7 +145,7 @@ def run(
 
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
+    except Exception:  # audit: ok
         pass
 
     root = target_root.resolve()
@@ -420,8 +428,6 @@ def run(
         stdout_lines.append("  SKIP: --fast")
         stdout_lines.append("")
     else:
-        import importlib.util
-
         if importlib.util.find_spec("coverage") is None:
             stdout_lines.append("  SKIP: coverage not installed (pip install coverage)")
             stdout_lines.append("")

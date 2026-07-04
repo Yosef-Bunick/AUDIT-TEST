@@ -24,11 +24,16 @@ pip install -e .
 
 ```powershell
 audit-code                    # full audit on current directory
-audit-code --min              # fast: syntax + static only (seconds)
-audit-code --full             # complete: all checks + raw output
+audit-code --min              # fast: wiring + quality only (seconds)
+audit-code --full             # complete: all checks
 audit-code --fix              # auto-format: black + ruff --fix
 audit-code --path <dir>       # audit a specific project
 audit-code --report-only      # print findings, always exit 0
+audit-code --json results.json   # write JSON report
+audit-code --sarif results.sarif # write SARIF (GitHub code scanning)
+audit-code --junit results.xml   # write JUnit (CI dashboards)
+audit-code --profile agent-engine  # enable Agent Engine profile
+audit-code --config audit-code.toml  # use custom config file
 audit-code --help             # show all options
 ```
 
@@ -66,6 +71,39 @@ python run_all_audits.py       # orchestrate all five into one report
 | runtime | **Will it hang or crash?** Unbounded loops, missing timeouts, secrets in logs |
 | suite | **Is the test suite healthy?** Runs pytest, classifies real vs pollution failures |
 | quality | **External gates + execution truth.** Black, ruff, mypy, CVE scan, coverage |
+
+## Languages
+
+Auto-detects 9 languages (marker files or source files anywhere in the tree,
+root included). Python runs the full five-audit stack. Every other language
+gets a **real** syntax check plus its native test suite — and when the
+required toolchain is missing, the result is an honest `SKIP` with the
+install hint, never a fake pass:
+
+| Language | Detection | Syntax check | Test suite |
+|---|---|---|---|
+| Python | `pyproject.toml`, `setup.py`, `*.py` | `ast.parse` per file (built-in) | pytest (via `suite` audit) |
+| JS / TS | `package.json`, `*.js`, `*.ts` | `node --check`; TS via `tsc --noEmit` (TS1xxx only) | `npm test` (real script only) |
+| Java | `pom.xml`, `build.gradle`, `*.java` | `javac -proc:none` (parse errors only; classpath noise not judged) | `mvn test` / `gradlew test` |
+| Go | `go.mod`, `*.go` | `gofmt -l -e` (parse + format drift) | `go test ./...` |
+| Rust | `Cargo.toml`, `*.rs` | `cargo check` | `cargo test` |
+| C# | `*.cs` | `dotnet build` (SKIP if restore fails) | `dotnet test` |
+| C / C++ | `CMakeLists.txt`, `Makefile`, `*.c(pp)` | `gcc/clang -fsyntax-only` or `cl /Zs` per unit | `ctest` (if `build/` exists) |
+| HTML / CSS | `*.html`, `*.css`, `*.scss` | tag-balance / brace-balance (structural, stdlib) | — |
+| SQL | `*.sql` | `sqlfluff parse` (ANSI; SKIP if not installed) | — |
+
+Restrict detection with `[audit] languages = ["python", "go"]` in
+`audit-code.toml` (empty list = auto-detect all).
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Audits completed, passed |
+| 1 | Completed but blocking problems found |
+| 2 | Setup or configuration error |
+| 3 | Required audit or tool crashed |
+| 4 | No supported language detected |
 
 ### Severity levels
 

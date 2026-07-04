@@ -1,0 +1,32 @@
+# Example: audit-code.toml
+# Copy this to your project root and customize.
+
+[project]
+name = "my-project"
+
+[audit]
+# Empty = auto-detect every supported language
+# (python, javascript, java, go, rust, csharp, cpp, html, sql).
+# List languages explicitly to restrict the audit, e.g. ["python", "go"].
+languages = []
+profiles = []
+
+[paths]
+source = ["src", "engine"]
+tests = ["tests"]
+exclude = [
+    ".git",
+    ".venv",
+    "node_modules",
+    "dist",
+    "build",
+]
+
+[gate]
+mutation_kill_percent = 70
+require_changed_line_coverage = true
+baseline = "HEAD"
+
+[reporting]
+json = "audit-results.json"
+sarif = "audit-results.sarif"

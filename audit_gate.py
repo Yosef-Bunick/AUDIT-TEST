@@ -352,6 +352,101 @@ def g4_mutation(shadow: Path, changed: dict, defs: list, kill_pct: int):
     return (rate >= kill_pct, detail, survivors)
 
 
+def _run_g2_g3(shadow, changed, verdicts):
+    """G2 suite + G3 execution proof under branch coverage."""
+    defs = _changed_defs(shadow, changed)
+    # G2 + G3: suite under coverage
+    print("G2+G3: full suite under BRANCH coverage in shadow worktree ...")
+    env = dict(os.environ, COVERAGE_FILE=str(shadow / ".gate_cov"))
+    rc, out = _run(
+        [
+            sys.executable,
+            "-m",
+            "coverage",
+            "run",
+            "--branch",
+            f"--source={shadow}",
+            "-m",
+            "pytest",
+            TESTS_DIR,
+            *PYTEST_BASE,
+        ],
+        shadow,
+        timeout=SUITE_TIMEOUT,
+        env=env,
+    )
+    m = re.search(r"(\d+) failed", out)
+    failed = int(m.group(1)) if m else (0 if rc == 0 else -1)
+    verdicts["G2 suite-green"] = (
+        rc == 0,
+        (
+            "suite passed"
+            if rc == 0
+            else f"{failed if failed >= 0 else '?'} test(s) failed - run pytest for detail"
+        ),
+    )
+    defs = _changed_defs(shadow, changed)
+    if not defs:
+        verdicts["G3 execution-proof"] = (True, "no changed prod defs to prove")
+    else:
+        _run(
+            [
+                sys.executable,
+                "-m",
+                "coverage",
+                "json",
+                "-o",
+                str(shadow / ".gate_cov.json"),
+                "--data-file",
+                str(shadow / ".gate_cov"),
+            ],
+            shadow,
+            env=env,
+        )
+        try:
+            cov = json.loads((shadow / ".gate_cov.json").read_text())
+            executed, missing = {}, {}
+            for fpath, d in cov.get("files", {}).items():
+                key = str(Path(fpath))
+                executed[key] = set(d.get("executed_lines", []))
+                missing[key] = set(d.get("missing_lines", []))
+        except (OSError, json.JSONDecodeError):
+            executed, missing = {}, {}
+        missed = []
+        for rel, qual, defline, b0, b1 in defs:
+            lines = executed.get(rel) or executed.get(str(Path(rel))) or set()
+            if not any(ln in lines for ln in range(b0, b1 + 1)):
+                missed.append(f"{rel}:{defline} {qual}")
+        line_misses = []
+        for rel, lines in changed.items():
+            if lines is None or not rel.endswith(".py") or rel.startswith(TESTS_DIR):
+                continue
+            miss = missing.get(rel) or missing.get(str(Path(rel))) or set()
+            dead = sorted(lines & miss)
+            if dead:
+                line_misses.append(
+                    f"{rel}: {len(dead)} changed line(s) never run (e.g. {dead[:4]})"
+                )
+        ok3 = not missed and not line_misses
+        parts = []
+        if missed:
+            parts.append(
+                f"{len(missed)}/{len(defs)} changed def(s) NEVER run: "
+                + "; ".join(missed[:5])
+            )
+        if line_misses:
+            parts.append("; ".join(line_misses[:4]))
+        verdicts["G3 execution-proof"] = (
+            ok3,
+            (
+                f"all {len(defs)} changed def(s) + all changed lines execute under tests"
+                if ok3
+                else " | ".join(parts)
+            ),
+        )
+    return defs
+
+
 def _run_gates(shadow: Path, changed: dict, args) -> dict:
     """G1 static regression + G2 suite + G3 execution proof + G4 mutation."""
     verdicts = {}
@@ -398,99 +493,7 @@ def _run_gates(shadow: Path, changed: dict, args) -> dict:
                         )
                     ),
                 )
-        # G2 + G3: suite under coverage
-        print("G2+G3: full suite under BRANCH coverage in shadow worktree ...")
-        env = dict(os.environ, COVERAGE_FILE=str(shadow / ".gate_cov"))
-        rc, out = _run(
-            [
-                sys.executable,
-                "-m",
-                "coverage",
-                "run",
-                "--branch",
-                f"--source={shadow}",
-                "-m",
-                "pytest",
-                TESTS_DIR,
-                *PYTEST_BASE,
-            ],
-            shadow,
-            timeout=SUITE_TIMEOUT,
-            env=env,
-        )
-        m = re.search(r"(\d+) failed", out)
-        failed = int(m.group(1)) if m else (0 if rc == 0 else -1)
-        verdicts["G2 suite-green"] = (
-            rc == 0,
-            (
-                "suite passed"
-                if rc == 0
-                else f"{failed if failed >= 0 else '?'} test(s) failed - run pytest for detail"
-            ),
-        )
-        defs = _changed_defs(shadow, changed)
-        if not defs:
-            verdicts["G3 execution-proof"] = (True, "no changed prod defs to prove")
-        else:
-            _run(
-                [
-                    sys.executable,
-                    "-m",
-                    "coverage",
-                    "json",
-                    "-o",
-                    str(shadow / ".gate_cov.json"),
-                    "--data-file",
-                    str(shadow / ".gate_cov"),
-                ],
-                shadow,
-                env=env,
-            )
-            try:
-                cov = json.loads((shadow / ".gate_cov.json").read_text())
-                executed, missing = {}, {}
-                for fpath, d in cov.get("files", {}).items():
-                    key = str(Path(fpath))
-                    executed[key] = set(d.get("executed_lines", []))
-                    missing[key] = set(d.get("missing_lines", []))
-            except (OSError, json.JSONDecodeError):
-                executed, missing = {}, {}
-            missed = []
-            for rel, qual, defline, b0, b1 in defs:
-                lines = executed.get(rel) or executed.get(str(Path(rel))) or set()
-                if not any(ln in lines for ln in range(b0, b1 + 1)):
-                    missed.append(f"{rel}:{defline} {qual}")
-            line_misses = []
-            for rel, lines in changed.items():
-                if (
-                    lines is None
-                    or not rel.endswith(".py")
-                    or rel.startswith(TESTS_DIR)
-                ):
-                    continue
-                miss = missing.get(rel) or missing.get(str(Path(rel))) or set()
-                dead = sorted(lines & miss)
-                if dead:
-                    line_misses.append(
-                        f"{rel}: {len(dead)} changed line(s) never run (e.g. {dead[:4]})"
-                    )
-            ok3 = not missed and not line_misses
-            parts = []
-            if missed:
-                parts.append(
-                    f"{len(missed)}/{len(defs)} changed def(s) NEVER run: "
-                    + "; ".join(missed[:5])
-                )
-            if line_misses:
-                parts.append("; ".join(line_misses[:4]))
-            verdicts["G3 execution-proof"] = (
-                ok3,
-                (
-                    f"all {len(defs)} changed def(s) + all changed lines execute under tests"
-                    if ok3
-                    else " | ".join(parts)
-                ),
-            )
+        defs = _run_g2_g3(shadow, changed, verdicts)
         # G4: mutation on changed lines
         if args.fast:
             verdicts["G4 mutation-kill"] = (True, "skipped (--fast)")
