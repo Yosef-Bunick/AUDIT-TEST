@@ -43,10 +43,11 @@ Common keywords include:
 
 ```powershell
 audit-test                     # full audit (high+medium+info)
+audit-test v                   # full audit verbose
 audit-test f                   # fix: auto-format (lint+black)
 audit-test m                   # min: fast wiring + phd + quality
 audit-test F                   # full: checks + raw output
-audit-test w r h               # wiring+runtime hight only
+audit-test w r h               # wiring+runtime high only
 audit-test -p <dir>            # audit a specific project
 audit-test -s "s q"            # skip whats in next value "suite + quality"
 ```
