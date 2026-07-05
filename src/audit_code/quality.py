@@ -579,12 +579,13 @@ def run(  # needs fix (god function 550+ lines — decompose into sub-audits)
                         f"  {total} defs scanned; {total - never} executed under tests "
                         f"({pct:.1f}%); {never} never ran ({len(flagged)} flagged)"
                     )
-                    for rel, def_ln, qual, size in sorted(flagged, key=lambda x: -x[3])[
-                        :25
-                    ]:
-                        stdout_lines.append(
-                            f"    {str(rel):44} :{def_ln:<5} {qual}  ({size} lines)"
-                        )
+                    shown = 0
+                    for rel, def_ln, qual, size in sorted(flagged, key=lambda x: -x[3]):
+                        if shown < 25:
+                            shown += 1
+                            stdout_lines.append(
+                                f"    {str(rel):44} :{def_ln:<5} {qual}  ({size} lines)"
+                            )
                         findings.append(
                             Finding(
                                 rule_id="Q5",

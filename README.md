@@ -338,17 +338,9 @@ its import-graph walk.
 
 ### `#needs fix`
 
-For known issues you can't fix right now but don't want to suppress permanently.
-The annotation flags intent without silencing the finding:
-
-```python
-except Exception:         #needs fix (broad except — use AttributeError, OSError)
-sys.setrecursionlimit(10000)  #needs fix (iterative Tarjan SCC instead of recursion hack)
-```
-
-Unlike `# audit: ok`, this does NOT suppress the finding. The audit still reports
-it — the annotation is for humans (and future you) to know the issue is acknowledged
-and needs real remediation, not a suppressive bandaid.
+For known issues you can't fix right now but don't want to suppress. Unlike `# audit: ok`,
+this does NOT silence the finding — the annotation flags acknowledged debt.
+Grep the codebase for the current list, or see [ROADMAP.md](ROADMAP.md#known-issues-needs-fix).
 
 ## Requirements
 
