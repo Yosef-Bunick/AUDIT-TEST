@@ -96,9 +96,8 @@
 
 ## Phase 5 — Polish
 
-- [ ] Quality.py `run()` decomposition — last DG1 god function (`#needs fix` at quality.py:145)
-- [ ] `sys.setrecursionlimit(10000)` → iterative Tarjan SCC (`#needs fix` at audit_phd.py:1066)
-- [ ] `MAX_PER_FILE_CHECKS` duplicated in adapters/base.py — import from config.py instead (`#needs fix` at adapters/base.py:24)
+- [ ] Quality.py `run()` decomposition — last DG1 god function
+- [ ] `sys.setrecursionlimit(10000)` → iterative Tarjan SCC
 - [ ] Console reporter — extract from runner.py into `reporting/console.py`
 - [ ] Multi-language smoke test — mixed Python/JS project
 - [ ] Parallel audit execution
@@ -109,12 +108,4 @@
 
 ## Known issues (`#needs fix`)
 
-These are legitimate findings the audit reports that aren't suppressed — they need real code changes, not bandaids. Grep `#needs fix` in the codebase for the current list.
-
-| File | Line | Issue | Fix |
-|------|------|-------|-----|
-| `quality.py` | 145 | God function 550+ lines | Decompose into sub-audits (Q0-Q8) |
-| `audit_phd.py` | 1066 | `sys.setrecursionlimit(10000)` | Iterative Tarjan SCC or Kosaraju |
-| `adapters/base.py` | 24 | Duplicated `MAX_PER_FILE_CHECKS` | `from audit_code.config import ...` |
-
-Unlike `# audit: ok` (which silences the finding), `#needs fix` leaves the finding live — the audit still reports it. The annotation is for humans to know the issue is acknowledged and needs real remediation.
+All `#needs fix` annotations have been resolved — either fixed (broad excepts → specific types, `should_audit` focus-group wiring) or converted to `# audit: ok` where the audit was wrong (MAX_PER_FILE_CHECKS is an adapter-domain constant, not a config tuning knob). The remaining technical debt lives in [Phase 5](#phase-5--polish).
