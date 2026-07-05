@@ -6,8 +6,12 @@
 # Patterns match directory/file name parts (exact match, not substring).
 #
 # Built-in defaults:
-#   graphify-out, bunick-ai-desktop, __pycache__, .venv, venv,
-#   sandbox, logs, eval_results, golden_tasks, fixes and info,
+#   graphify-out, __pycache__, .venv, venv,
+#   sandbox, logs, eval_results, golden_tasks,
 #   .git, node_modules, .ruff_cache, .pytest_cache, scratch,
 #   dist, build, .eggs
 
+
+#only
+#main.py
+#only

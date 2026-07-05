@@ -21,7 +21,10 @@ Usage:
 """
 
 import argparse
+import os
 import sys
+from collections import namedtuple as _nt  # audit: ok (focus helpers)
+from pathlib import Path
 
 from audit_code.config import load_project_config
 from audit_code.gate import run_gate as gate_main
@@ -355,6 +358,362 @@ def _force_utf8_output() -> None:
             pass
 
 
+# ── focus / ignore commands ──────────────────────────────────────────────────
+
+_Grp = _nt("_Grp", "files path desc")  # audit: ok (named focus groups)
+_IGNORE_PATH = Path.cwd() / ".audit-test-ignore"
+
+
+def _ig_read() -> list[str]:
+    try:
+        if _IGNORE_PATH.exists():
+            return _IGNORE_PATH.read_text(encoding="utf-8").splitlines()
+        return []
+    except OSError:
+        return []
+
+
+def _ig_write(lines: list[str]) -> None:
+    _IGNORE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _confirm(msg: str, twice: bool = False) -> bool:
+    ans = input(f"{msg} [y/n]: ").strip().lower()
+    if ans != "y":
+        print("cancelled")
+        return False
+    if twice:
+        ans2 = input("confirm ALL [q/z]: ").strip().lower()
+        if ans2 not in ("q", "z"):
+            print("cancelled")
+            return False
+    return True
+
+
+def _parse_groups(lines: list[str]) -> tuple[dict[str, _Grp], str]:
+    groups: dict[str, _Grp] = {}
+    default = ""
+    inside = False
+    for ln in lines:
+        s = ln.strip()
+        if s.lower() == "#only":
+            inside = not inside
+            continue
+        if not inside:
+            if s.lower().startswith("#path"):
+                default = s.split(None, 1)[1].strip() if " " in s else ""
+            continue
+        if s.startswith("#") or not s:
+            continue
+        desc, path = "", default
+        if "|" in s:
+            s, desc = s.split("|", 1)
+            desc = desc.strip()
+        if " /" in s:
+            s, path = s.rsplit(" /", 1)
+            path = path.strip()
+        if "=[" in s and s.endswith("]"):
+            name, rest = s.split("=[", 1)
+            files = tuple(f.strip() for f in rest[:-1].split(",") if f.strip())
+            groups[name.strip()] = _Grp(files, path, desc)
+    return groups, default
+
+
+def _rebuild_file(
+    lines: list[str], groups: dict[str, _Grp], default_path: str
+) -> list[str]:
+    """Keep outside lines, replace #only block with groups."""
+    out: list[str] = []
+    inside = False
+    for ln in lines:
+        s = ln.strip().lower()
+        if s == "#only":
+            inside = not inside
+            continue
+        if not inside:
+            out.append(ln)
+    while out and not out[-1].strip():
+        out.pop()
+    if groups:
+        out.append("#only")
+        for name, g in sorted(groups.items()):
+            line = f"{name}=[{', '.join(g.files)}]"
+            if g.path and g.path != default_path:
+                sep = " " if g.path.startswith("/") or g.path.startswith("C:") else " /"
+                line += f"{sep}{g.path}"
+            if g.desc:
+                line += f"  | {g.desc}"
+            out.append(line)
+        out.append("#only")
+    return out
+
+
+def _focus_help() -> None:
+    print("""focus — manage and run #only groups in .audit-test-ignore
+
+  focus <group>             run audit on group
+  focus <group> <flags>     run with audit flags (high, v, full, etc.)
+  focus <group> /path       run group from specific path
+  focus add <group> <files> append files to group
+  focus del <group> <files> remove files from group
+  focus path <group> [/p]   show/set group path
+  focus desc <group> [text] show/set group description
+  focus info [group]        list all groups or show one
+  focus clear [group]       remove group(s)
+  focus help                this help
+""")
+
+
+def _handle_focus() -> None:  # audit: ok (CLI entry point)
+    idx = sys.argv.index("focus")
+    args = sys.argv[idx + 1 :]
+    act = args[0] if args else ""
+
+    if not args or act == "info":
+        groups, default = _parse_groups(_ig_read())
+        target = args[1] if len(args) > 1 else ""
+        if target:
+            if target not in groups:
+                print(f"'{target}' not found")
+                sys.exit(2)
+            g = groups[target]
+            d = f"  | {g.desc}" if g.desc else ""
+            print(f"{target}=[{', '.join(g.files)}] @ {g.path or default or 'cwd'}{d}")
+        else:
+            if not groups:
+                print("no groups — use 'focus add <name> <files>'")
+            for n, g in sorted(groups.items()):
+                d = f"  | {g.desc}" if g.desc else ""
+                print(f"  {n}=[{', '.join(g.files)}] @ {g.path or default or 'cwd'}{d}")
+        sys.exit(0)
+
+    if act == "help":
+        _focus_help()
+        sys.exit(0)
+
+    if act == "clear":
+        group = args[1] if len(args) > 1 else ""
+        if group:
+            if not _confirm(f"remove group '{group}'?"):
+                sys.exit(0)
+            lines = _ig_read()
+            groups, _ = _parse_groups(lines)
+            if group in groups:
+                del groups[group]
+            _ig_write(_rebuild_file(lines, groups, ""))
+            print(f"removed '{group}'")
+        else:
+            if not _confirm("remove ALL groups?", twice=True):
+                sys.exit(0)
+            lines = _ig_read()
+            out: list[str] = []
+            inside = False
+            for ln in lines:
+                if ln.strip().lower() == "#only":
+                    inside = not inside
+                    continue
+                if not inside:
+                    out.append(ln)
+            _ig_write(out)
+            print("all groups removed")
+        sys.exit(0)
+
+    if act == "add":
+        if len(args) < 3:
+            print("usage: focus add <group> <file...>")
+            sys.exit(2)
+        _focus_edit("add", args[1], args[2:])
+        sys.exit(0)
+
+    if act == "del":
+        if len(args) < 3:
+            print("usage: focus del <group> <file...>")
+            sys.exit(2)
+        _focus_edit("del", args[1], args[2:])
+        sys.exit(0)
+
+    if act == "path":
+        if len(args) < 2:
+            print("usage: focus path <group> [/path]")
+            sys.exit(2)
+        _focus_set_path(args[1], args[2] if len(args) > 2 else "")
+        sys.exit(0)
+
+    if act == "desc":
+        if len(args) < 2:
+            print("usage: focus desc <group> [text]")
+            sys.exit(2)
+        _focus_set_desc(args[1], " ".join(args[2:]) if len(args) > 2 else "")
+        sys.exit(0)
+
+    _focus_run(args)
+
+
+def _focus_edit(op: str, name: str, files: list[str]) -> None:
+    lines = _ig_read()
+    groups, default = _parse_groups(lines)
+    if name not in groups:
+        if op == "del":
+            print(f"'{name}' not found")
+            sys.exit(2)
+        groups[name] = _Grp((), default, "")
+    g = groups[name]
+    cur = list(g.files)
+    if op == "add":
+        cur.extend(files)
+    else:
+        for f in files:
+            if f in cur:
+                cur.remove(f)
+    groups[name] = _Grp(tuple(cur), g.path, g.desc)
+    _ig_write(_rebuild_file(lines, groups, default))
+    print(f"{name} = [{', '.join(cur)}]")
+
+
+def _focus_set_path(name: str, new_path: str) -> None:
+    lines = _ig_read()
+    groups, default = _parse_groups(lines)
+    if name not in groups:
+        print(f"'{name}' not found")
+        sys.exit(2)
+    g = groups[name]
+    if not new_path:
+        print(f"path: {g.path or default or 'cwd'}")
+        return
+    groups[name] = _Grp(g.files, new_path, g.desc)
+    _ig_write(_rebuild_file(lines, groups, default))
+    print(f"set path for '{name}' to {new_path}")
+
+
+def _focus_set_desc(name: str, desc: str) -> None:
+    lines = _ig_read()
+    groups, default = _parse_groups(lines)
+    if name not in groups:
+        print(f"'{name}' not found")
+        sys.exit(2)
+    g = groups[name]
+    if not desc:
+        print(f"desc: {g.desc or '(none)'}")
+        return
+    groups[name] = _Grp(g.files, g.path, desc)
+    _ig_write(_rebuild_file(lines, groups, default))
+    print(f"set desc for '{name}'")
+
+
+def _focus_run(args: list[str]) -> None:
+    if not args:
+        print("usage: focus <group> [flags...]")
+        sys.exit(2)
+    name = args[0]
+    lines = _ig_read()
+    groups, default = _parse_groups(lines)
+    if name not in groups:
+        print(f"'{name}' not found. groups: {sorted(groups)}")
+        sys.exit(2)
+    g = groups[name]
+    root = g.path or default or str(Path.cwd())
+    rest = args[1:]
+    filtered = []
+    for a in rest:
+        if a.startswith("/") or a.startswith("C:") or a.startswith("D:"):
+            root = a
+        else:
+            filtered.append(a)
+    os.environ["AUDIT_FOCUS_GROUP"] = name
+    sys.argv = [sys.argv[0], "-p", root] + filtered
+    _expand_bare_words()
+    parser = build_audit_parser()
+    ns = parser.parse_args()
+    sys.exit(run_audit(ns))
+
+
+def _handle_ignore() -> None:  # audit: ok (CLI entry point)
+    idx = sys.argv.index("ignore")
+    args = sys.argv[idx + 1 :]
+    act = args[0] if args else "info"
+
+    if act in ("help", "-H", "--help"):
+        print("""ignore — manage skip patterns in .audit-test-ignore
+
+  ignore add <pattern>     add a skip pattern
+  ignore del <pattern>     remove a skip pattern
+  ignore info              list all skip patterns
+  ignore clear             remove ALL custom patterns
+  ignore help              this help
+""")
+        sys.exit(0)
+
+    lines = _ig_read()
+    outside: list[str] = []
+    only_block: list[str] = []
+    in_only = False
+    for ln in lines:
+        if ln.strip().lower() == "#only":
+            in_only = not in_only
+            only_block.append(ln)
+            continue
+        (only_block if in_only else outside).append(ln)
+
+    if act == "info":
+        custom = [
+            line
+            for line in outside
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        if custom:
+            print("skip patterns:")
+            for p in custom:
+                print(f"  {p}")
+        else:
+            print("no custom skip patterns")
+        sys.exit(0)
+
+    if act == "add":
+        if len(args) < 2:
+            print("usage: ignore add <pattern>")
+            sys.exit(2)
+        outside.append(args[1])
+        _ig_write(outside + only_block)
+        print(f"added: {args[1]}")
+        sys.exit(0)
+
+    if act == "del":
+        if len(args) < 2:
+            print("usage: ignore del <pattern>")
+            sys.exit(2)
+        if args[1] not in outside:
+            print(f"not found: {args[1]}")
+            sys.exit(2)
+        outside.remove(args[1])
+        _ig_write(outside + only_block)
+        print(f"removed: {args[1]}")
+        sys.exit(0)
+
+    if act == "clear":
+        if not _confirm("remove ALL custom ignore patterns?"):
+            sys.exit(0)
+        kept = [
+            line for line in outside if line.strip().startswith("#") or not line.strip()
+        ]
+        _ig_write(kept + only_block)
+        print("all patterns removed")
+        sys.exit(0)
+
+    print(f"unknown action: {act} — try 'ignore help'")
+    sys.exit(2)
+
+
+# ── mode detection helpers ──────────────────────────────────────────────────
+
+
+def _is_focus_mode() -> bool:
+    return "focus" in sys.argv
+
+
+def _is_ignore_mode() -> bool:
+    return "ignore" in sys.argv
+
+
 def main():
     _force_utf8_output()
     if _is_gate_mode():
@@ -363,6 +722,10 @@ def main():
         parser = build_gate_parser()
         args = parser.parse_args()
         sys.exit(run_gate_cmd(args))
+    elif _is_focus_mode():
+        _handle_focus()
+    elif _is_ignore_mode():
+        _handle_ignore()
     else:
         _expand_bare_words()
         parser = build_audit_parser()

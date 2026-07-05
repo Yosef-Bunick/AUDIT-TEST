@@ -38,14 +38,13 @@ pip install -e .
 
 ## Usage
 
-Bare words or flags — both work: 
-Common keywords include:
+Bare words or flags both work, Common keywords include:
 
 ```powershell
 audit-test                     # full audit (high+medium+info)
 audit-test v                   # full audit with verbose output
 audit-test f                   # fix: auto-format (lint+black)
-audit-test m                   # min: fast wiring + phd + quality
+audit-test min                 # min: fast wiring + phd + quality
 audit-test F                   # full: checks + raw output
 audit-test w r h               # wiring+runtime high only
 audit-test -p <dir>            # audit a specific project
@@ -246,6 +245,14 @@ Skip directories or files from all scans. Drop this file in your project root.
 One pattern per line, `#` for comments. Patterns are merged with built-in defaults
 (`.venv`, `node_modules`, `.git`, `__pycache__`, `dist`, `build`, etc.):
 
+use only only to direct audit only to files within. 
+
+```powershell
+#only 
+only1=[main.py]
+only2=[main.py,cli.py]
+#only 
+``
 ```
 # .audit-test-ignore
 generated/
