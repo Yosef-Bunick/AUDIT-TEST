@@ -38,11 +38,11 @@ pip install -e .
 
 ## Usage
 
-Bare words or flags both work, Common keywords include:
+Bare words or flags — both work:
 
 ```powershell
-audit-test                     # full audit (high+medium+info)
-audit-test v                   # full audit with verbose output
+audit-test                     # full audit (HIGH only)
+audit-test v                   # full audit, verbose
 audit-test f                   # fix: auto-format (lint+black)
 audit-test min                 # min: fast wiring + phd + quality
 audit-test F                   # full: checks + raw output
@@ -73,7 +73,6 @@ audit-test -s "s q"            # skip whats in next value "suite + quality"
 | `f` | auto-format (~1s) |
 | `F` | full analysis |
 | `fast` | skip slow checks |
-| `-s`| skip next value or what is in quote|
 
 ### Full keyword reference
 
@@ -125,23 +124,30 @@ All forms work — bare words, `-short`, or `--long`:
 | `htmlhint` | | `--htmlhint` | HTMLHint (HTML) |
 | `stylelint` | | `--stylelint` | Stylelint (CSS/SCSS) |
 
+### Focus groups
+
+Save file sets in `.audit-test-ignore` and run audits against them:
 
 ```powershell
-audit-test phd                # PHD static audit
-audit-test wiring             # wiring audit
-audit-test runtime            # runtime audit
-audit-test suite              # test suite audit
-audit-test quality            # quality gates
-audit-test syntax             # all language syntax checks
-audit-test python             # Python syntax only
-audit-test tests              # non-Python test suites
-audit-test lint               # ruff check
-audit-test black              # black format
-audit-test semgrep            # semgrep security scan
-audit-test bandit             # bandit security scan
-audit-test lint fix           # ruff --fix
-audit-test black fix          # black format
-audit-test phd wiring medium  # mix any modules + severity
+audit-test focus add fast main.py cli.py   # create group
+audit-test focus info                        # list all groups
+audit-test focus fast                        # audit the 'fast' group
+audit-test focus fast v /mnt/c/other         # verbose, from other path
+audit-test focus path fast /mnt/c/other      # set group path
+audit-test focus desc fast "quick checks"    # set description
+audit-test focus del fast cli.py             # remove file from group
+audit-test focus clear fast                  # delete group
+```
+
+### Ignore patterns
+
+Manage `.audit-test-ignore` skip patterns directly:
+
+```powershell
+audit-test ignore add generated/             # add skip pattern
+audit-test ignore info                       # list patterns
+audit-test ignore del generated/             # remove pattern
+audit-test ignore clear                      # remove all custom patterns
 ```
 
 ### Change gate
@@ -238,27 +244,27 @@ disposable git worktree:
 - **Honest limits.** No static tool promises semantic correctness — this stack narrows the gap.
 
 ## Configuration
-
 ### `.audit-test-ignore`
 
 Skip directories or files from all scans. Drop this file in your project root.
-One pattern per line, `#` for comments. Patterns are merged with built-in defaults
-(`.venv`, `node_modules`, `.git`, `__pycache__`, `dist`, `build`, etc.):
+One pattern per line, `#` for comments. Built-in defaults are always applied
+(`.venv`, `node_modules`, `.git`, `__pycache__`, `dist`, `build`, etc.).
 
-use only only to direct audit only to files within. 
+Use `#only` blocks to focus audits on specific files:
 
-```powershell
-#only 
-only1=[main.py]
-only2=[main.py,cli.py]
-#only 
-``
 ```
 # .audit-test-ignore
 generated/
 third_party/
 *.pb2.py
+
+#only
+fast=[src/main.py,src/cli.py]
+slow=[src/quality.py] /mnt/c/other  | full sweep
+#only
 ```
+
+Group format: `name=[file1,file2] [/path_override] [| description]`
 
 Patterns match directory/file name parts (exact match, not substring).
 
