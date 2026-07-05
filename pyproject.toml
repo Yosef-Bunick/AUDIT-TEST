@@ -4,11 +4,32 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "audit-test"
-version = "0.2.4"
+version = "0.2.5"
 description = "Code and test verification orchestrator — interrogates code quality AND whether tests genuinely prove correctness"
 requires-python = ">=3.10"
 license = {text = "CC BY-NC-ND 4.0"}
 readme = "README.md"
+
+# Lightweight, pure-Python linters the Python audit stack leans on. Installed
+# automatically so `pip install audit-test` "just works" on a Python project.
+# (Non-Python toolchains — node, go, cargo, javac, etc. — cannot be pip-installed
+# and are detected at runtime, SKIP-ping cleanly when absent.)
+dependencies = [
+    "ruff>=0.4",
+    "bandit>=1.7",
+    "mypy>=1.8",
+    "black>=24.0",
+    "coverage>=7.0",
+]
+
+[project.optional-dependencies]
+# `pip install audit-test[all]` adds the heavier / niche scanners.
+all = [
+    "semgrep>=1.50",   # large binary; deep security patterns
+    "pip-audit>=2.7",  # dependency CVE scan (Q4)
+    "mutmut>=2.4",     # mutation testing (Q8, opt-in)
+    "sqlfluff>=3.0",   # SQL lint (only if you audit .sql)
+]
 
 [project.scripts]
 audit-code = "audit_code.cli:main"

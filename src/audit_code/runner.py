@@ -15,7 +15,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from audit_code import phd, quality, runtime, suite, wiring
+from audit_code import encoding_check, phd, quality, runtime, suite, wiring
 from audit_code.adapters import discover
 from audit_code.adapters.base import run_tool, which
 from audit_code.audit_shared import force_utf8_streams
@@ -71,6 +71,17 @@ def run_suite(
     print(
         "  languages: " + (", ".join(a.language for a in adapters) or "none detected")
     )
+
+    # 0. Universal source-encoding check (language-agnostic; honours the target's
+    #    #encoding, default utf-8). Runs on default/full; skipped in `min` and
+    #    when a narrower module set that omits it is requested.
+    if modules is None or "encoding" in modules:
+        _run_step(
+            results,
+            "encoding",
+            "Source encoding",
+            lambda: encoding_check.run(target_root),
+        )
 
     # 1. Per-language syntax audits (skip if modules set and syntax/python not requested)
     if modules is None or "syntax" in modules or "python" in modules:

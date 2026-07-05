@@ -23,6 +23,7 @@ from audit_code.audit_shared import (
     normalize_encoding,
     should_audit,
 )
+from audit_code.models import AuditResult, AuditStatus
 
 # Only the first slice is sniffed for NUL bytes when classifying binary files.
 _BINARY_SNIFF_BYTES = 4096
@@ -60,8 +61,13 @@ def scan(root: Path, encoding: str) -> tuple[list[tuple[Path, int, str]], int]:
     return failures, checked
 
 
-def run(target_root: Path, encoding: str | None = None) -> int:
-    """Run the encoding check and print a report. Return an exit code (0 = clean)."""
+def run(target_root: Path, encoding: str | None = None) -> AuditResult:
+    """Check every text file decodes under the chosen (or configured) encoding.
+
+    Language-agnostic; runs on any project.  Encoding precedence: explicit arg ->
+    the target's `#encoding` -> utf-8.  Returns an AuditResult so it slots into
+    the normal audit pipeline; each undecodable file counts as one HIGH finding.
+    """
     force_utf8_streams()
     root = target_root.resolve()
     enc = normalize_encoding(encoding or configured_encoding(root))
@@ -69,18 +75,26 @@ def run(target_root: Path, encoding: str | None = None) -> int:
     failures, checked = scan(root, enc)
 
     bar = "=" * 74
-    print(bar)
-    print(f"ENCODING [{enc}] — {len(failures)} file(s) not decodable / {checked} checked")
-    print(bar)
-    if not failures:
-        print(f"  all {checked} text file(s) are valid {enc}")
-        return 0
-    for path, offset, reason in failures[:50]:
-        try:
-            rel = path.relative_to(root)
-        except ValueError:
-            rel = path
-        print(f"  {rel}  byte {offset}: {reason}")
-    if len(failures) > 50:
-        print(f"  ... and {len(failures) - 50} more")
-    return 1
+    lines = [
+        bar,
+        f"ENCODING [{enc}] — {len(failures)} file(s) not decodable / {checked} checked",
+        bar,
+    ]
+    if failures:
+        for path, offset, reason in failures[:50]:
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                rel = path
+            lines.append(f"  {rel}  byte {offset}: {reason}")
+        if len(failures) > 50:
+            lines.append(f"  ... and {len(failures) - 50} more")
+    else:
+        lines.append(f"  all {checked} text file(s) are valid {enc}")
+
+    return AuditResult(
+        audit_id="encoding",
+        status=AuditStatus.FAIL if failures else AuditStatus.PASS,
+        high=len(failures),
+        stdout="\n".join(lines),
+    )

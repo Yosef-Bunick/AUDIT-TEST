@@ -46,9 +46,9 @@ def configured_encoding(root: Path | None = None) -> str:
     """
     base = Path.cwd() if root is None else root
     try:
-        for line in (base / ".audit-test-ignore").read_text(
-            encoding="utf-8"
-        ).splitlines():
+        for line in (
+            (base / ".audit-test-ignore").read_text(encoding="utf-8").splitlines()
+        ):
             s = line.strip()
             if s.lower().startswith("#encoding"):
                 parts = s.split(None, 1)

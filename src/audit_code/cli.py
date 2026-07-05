@@ -42,6 +42,7 @@ ALL_MODULES = {
     "runtime",
     "suite",
     "quality",
+    "encoding",
     "tests",
     "python",
     "lint",
@@ -178,6 +179,9 @@ def build_audit_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime", action="store_true", help="Run runtime audit")
     parser.add_argument("--suite", action="store_true", help="Run test suite audit")
     parser.add_argument("--quality", action="store_true", help="Run quality gates")
+    parser.add_argument(
+        "--encoding", action="store_true", help="Run source-encoding check only"
+    )
     parser.add_argument(
         "--tests", action="store_true", help="Run non-Python test suites"
     )
@@ -763,10 +767,14 @@ def _handle_check() -> None:
         try:
             encoding = normalize_encoding(encoding)
         except LookupError:
-            print(f"unknown encoding: {' '.join(enc_tokens)!r} — try utf-8, ascii, gb18030")
+            print(
+                f"unknown encoding: {' '.join(enc_tokens)!r} — try utf-8, ascii, gb18030"
+            )
             sys.exit(2)
     target = find_target_root(root)
-    sys.exit(encoding_check.run(target, encoding))
+    result = encoding_check.run(target, encoding)
+    print(result.stdout)
+    sys.exit(EXIT_FAIL if result.is_failure else EXIT_PASS)
 
 
 def main():
@@ -801,6 +809,7 @@ def _expand_bare_words() -> None:
         "runtime": "--runtime",
         "suite": "--suite",
         "quality": "--quality",
+        "encoding": "--encoding",
         "tests": "--tests",
         "lint": "--lint",
         "black": "--black",
@@ -868,7 +877,9 @@ def _expand_bare_words() -> None:
             new_argv.append(arg)
             prev_was_value_flag = arg in value_flags
         else:
-            new_argv.append(WORD_MAP.get(arg.lower(), arg))
+            # exact-case first so case-sensitive keys win ('F'->--full),
+            # then fall back to the lowercased form ('PHD'->--phd, 'f'->--fix)
+            new_argv.append(WORD_MAP.get(arg, WORD_MAP.get(arg.lower(), arg)))
             prev_was_value_flag = False
     sys.argv = new_argv
 

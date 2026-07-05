@@ -20,12 +20,26 @@ All in one shot. Zero config needed.
 pip install audit-test
 ```
 
+This pulls the core Python linters automatically (**ruff, bandit, mypy, black,
+coverage**) — so the Python audit works out of the box, no separate setup.
+
+Want the heavier / niche scanners too (semgrep, pip-audit CVE scan, mutmut
+mutation testing, sqlfluff)?
+
+```powershell
+pip install audit-test[all]
+```
+
+> Non-Python linters (ESLint, Prettier, clippy, go vet, clang-tidy, …) are
+> external toolchains pip can't install. audit-test detects them at runtime and
+> cleanly **SKIP**s any that are missing — it never fakes a pass.
+
 Or from source:
 
 ```powershell
 git clone https://github.com/Yosef-Bunick/AUDIT-TEST.git
 cd AUDIT-TEST
-pip install -e .
+pip install -e .          # or  pip install -e ".[all]"
 ```
 
 ## Usage
@@ -100,6 +114,7 @@ All forms work — bare words, `-short`, or `--long`:
 | `runtime` `r` | | `--runtime` | runtime audit |
 | `suite` `s` | | `--suite` | test suite audit |
 | `quality` `q` | | `--quality` | quality gates |
+| `encoding` | | `--encoding` | source-encoding check |
 | `syntax` | | `--syntax` | all language syntax checks |
 | `python` | | `--python` | Python syntax only |
 | `tests` | | `--tests` | non-Python test suites |
@@ -149,6 +164,38 @@ audit-test ignore del generated/             # remove pattern
 audit-test ignore clear                      # remove all custom patterns
 ```
 
+### Encoding check
+
+Verify every text file decodes cleanly under a chosen encoding (strict — no
+silent replacement). Binary files are skipped automatically.
+
+```powershell
+audit-test check utf-8         # every file must be valid UTF-8
+audit-test check ascii         # pure ASCII only
+audit-test check UTF-16        # names are case/space-insensitive
+audit-test check GB 18030      # multi-word names → gb18030
+audit-test check               # use the project's configured encoding
+audit-test check utf-8 -p <dir>   # check another project
+```
+
+Set a project's expected encoding once in its `.audit-test-ignore` — then a
+bare `check` (or a scan of that project) uses it:
+
+```
+#encoding utf-8
+```
+
+Precedence: explicit argument → the target's `#encoding` → `utf-8`. Exit code
+is `0` when every file matches, `1` when any file doesn't.
+
+The check also runs automatically inside a full/default audit (using the
+configured encoding) — so `audit-test full` already includes it. Use the
+standalone `check` command when you want to test a specific encoding on demand.
+
+> `check utf-8` / `ascii` / `gb18030` are strict. `check utf-16` / `utf-32` are
+> weaker — those decoders accept almost any even-length byte run, so they mainly
+> catch truncated files rather than proving the encoding.
+
 ### Change gate
 
 ```powershell
@@ -184,6 +231,7 @@ python run_all_audits.py       # orchestrate all five into one report
 | runtime | **Will it hang or crash?** Unbounded loops, missing timeouts, secrets in logs | [docs/runtime.md](docs/runtime.md) — 13 checks |
 | suite | **Is the test suite healthy?** Runs pytest, classifies real vs pollution failures | [docs/suite.md](docs/suite.md) |
 | quality | **External gates + execution truth.** Black, ruff, mypy, CVE scan, coverage | [docs/quality.md](docs/quality.md) — Q0-Q8 |
+| encoding | **Is the source the right encoding?** Strict-decodes every text file (UTF-8 by default; configurable) | `#encoding` + `check` |
 | integrations | **External tools.** semgrep, bandit, +14 native linters across 9 languages | [docs/integrations.md](docs/integrations.md) |
 
 ## Languages
@@ -267,6 +315,13 @@ slow=[src/quality.py] /mnt/c/other  | full sweep
 Group format: `name=[file1,file2] [/path_override] [| description]`
 
 Patterns match directory/file name parts (exact match, not substring).
+
+Declare the project's expected source encoding with `#encoding` — used by
+`audit-test check` (see [Encoding check](#encoding-check)):
+
+```
+#encoding utf-8
+```
 
 ### `# audit: ok`
 
