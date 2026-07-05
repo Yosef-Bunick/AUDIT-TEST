@@ -18,6 +18,7 @@ pip install -e .
 Self-audit (runs tests + all checks):
 
 ```powershell
+cd AUDIT-TEST
 audit-test v
 ```
 

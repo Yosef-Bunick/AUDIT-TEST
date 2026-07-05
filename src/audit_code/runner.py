@@ -106,17 +106,21 @@ def run_suite(
                 ),
             )
 
-    # 2.5 Native linters for detected (or explicitly named) languages.
-    #     Auto mode runs a linter only when its language is present and the
-    #     run is not `min`; an explicit `-s`/module request always runs it.
+    # 2.5 Native linters for the detected languages. A language linter is
+    #     gated on its language being present — the SAME rule whether the run
+    #     is bare `audit-test`, `-s <mod>`, or an explicit module list. `modules`
+    #     only narrows WHICH detected-language linters run; it never bypasses
+    #     detection (otherwise `-s quality`, whose module set is "everything but
+    #     quality", would fire clippy/eslint on a Python-only repo).
     detected_langs = {a.language for a in adapters}
     for lang, linters in LANGUAGE_LINTERS.items():
+        if lang not in detected_langs:
+            continue
         for module_name, desc in linters:
-            if modules is not None:
-                run_it = module_name in modules  # explicit request wins
-            else:
-                run_it = mode != "min" and lang in detected_langs
-            if not run_it:
+            if modules is None:
+                if mode == "min":
+                    continue
+            elif module_name not in modules:
                 continue
             _run_step(
                 results,
