@@ -294,6 +294,7 @@ def _resolve_modules(args: argparse.Namespace) -> set[str] | None:
 
 
 def run_audit(args: argparse.Namespace) -> int:
+    print("\N{RABBIT}  audit-test — Code auditor by Yosef Bunick  \N{RABBIT}")
     target_root = find_target_root(args.path)
     cfg = load_project_config(target_root, args.config)
 
@@ -335,6 +336,7 @@ def run_audit(args: argparse.Namespace) -> int:
 
 
 def run_gate_cmd(args: argparse.Namespace) -> int:
+    print("\N{RABBIT}  audit-test gate — Code auditor by Yosef Bunick  \N{RABBIT}")
     target_root = find_target_root(args.path)
     return gate_main(
         target_root, fast=args.fast, no_static=args.no_static, kill_pct=args.kill
