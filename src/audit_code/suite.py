@@ -1,5 +1,6 @@
 """suite.py — is the TEST SUITE itself healthy? (runs pytest and diagnoses)"""
 
+import os
 import re
 import shutil
 import subprocess
@@ -37,15 +38,37 @@ ENV_SKIP_RE = re.compile(
 )
 
 
-def _run_pytest(target: str, cwd: Path, timeout: int) -> tuple[str, int]:
+def _run_pytest(
+    target: str, cwd: Path, timeout: int, cov_file: Path | None = None
+) -> tuple[str, int]:
+    """Run pytest. When cov_file is given, run under coverage and write the
+    data there — so the quality audit can reuse this one run for its Q5
+    execution-proof instead of running the whole suite a second time."""
+    if cov_file is not None:
+        cmd = [
+            sys.executable,
+            "-m",
+            "coverage",
+            "run",
+            f"--source={cwd}",
+            "-m",
+            "pytest",
+            target,
+            *PYTEST_ARGS,
+        ]
+        env = dict(os.environ, COVERAGE_FILE=str(cov_file))
+    else:
+        cmd = [sys.executable, "-m", "pytest", target, *PYTEST_ARGS]
+        env = None
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", target, *PYTEST_ARGS],
+        cmd,
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         cwd=str(cwd),
         timeout=timeout,
+        env=env,
     )
     return (proc.stdout or "") + "\n" + (proc.stderr or ""), proc.returncode
 
@@ -256,8 +279,13 @@ def run(
     fast: bool = False,
     baseline: bool = False,
     strict: bool = True,
+    cov_file: Path | None = None,
 ) -> AuditResult:
-    """Run the suite audit."""
+    """Run the suite audit.
+
+    cov_file: if given, the main suite run is instrumented with coverage and
+    its data written there, so the quality audit can reuse it (one test run
+    for both audits instead of two)."""
     findings: list[Finding] = []
     stdout_lines: list[str] = []
     try:
@@ -269,7 +297,7 @@ def run(
     stdout_lines.append(header)
 
     try:
-        out, rc = _run_pytest(TESTS_DIR, target_root, FULL_SUITE_TIMEOUT)
+        out, rc = _run_pytest(TESTS_DIR, target_root, FULL_SUITE_TIMEOUT, cov_file)
     except subprocess.TimeoutExpired:
         findings.append(
             Finding(

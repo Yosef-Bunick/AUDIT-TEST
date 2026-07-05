@@ -151,8 +151,13 @@ def run(  # audit: ok  (orchestrator — all quality gates in one function)
     tests: str = "tests",
     pytest_extra: str = "-p no:logfire",
     fix: bool = False,
+    shared_cov: Path | None = None,
 ) -> AuditResult:
-    """Run quality audit against a target project."""
+    """Run quality audit against a target project.
+
+    shared_cov: coverage data file already produced by the suite audit's run.
+    When present and non-empty, Q5 reuses it instead of running the whole test
+    suite a second time under coverage."""
     findings: list[Finding] = []
     stdout_lines: list[str] = []
 
@@ -462,30 +467,44 @@ def run(  # audit: ok  (orchestrator — all quality gates in one function)
             stdout_lines.append("")
         else:
             tmp = Path(tempfile.mkdtemp(prefix="audit_q5_"))
-            data_file = tmp / ".coverage"
             json_file = tmp / "cov.json"
-            env = dict(os.environ, COVERAGE_FILE=str(data_file))
-            stdout_lines.append(
-                "  running suite under coverage (this is a full test run)..."
+            reuse = (
+                shared_cov is not None
+                and shared_cov.exists()
+                and shared_cov.stat().st_size > 0
             )
-            rc, out = _run(
-                [
-                    sys.executable,
-                    "-m",
-                    "coverage",
-                    "run",
-                    f"--source={root}",
-                    "-m",
-                    "pytest",
-                    str(tests_dir),
-                    "-q",
-                    "--tb=no",
-                    *pytest_extra.split(),
-                ],
-                root,
-                timeout=1800,
-                env=env,
-            )
+            if reuse:
+                # The suite audit already ran the whole suite under coverage;
+                # reuse its data instead of a second full test run.
+                data_file = shared_cov
+                env = dict(os.environ, COVERAGE_FILE=str(data_file))
+                stdout_lines.append(
+                    "  reusing the suite audit's coverage run (deduped — no second run)"
+                )
+            else:
+                data_file = tmp / ".coverage"
+                env = dict(os.environ, COVERAGE_FILE=str(data_file))
+                stdout_lines.append(
+                    "  running suite under coverage (this is a full test run)..."
+                )
+                rc, out = _run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "coverage",
+                        "run",
+                        f"--source={root}",
+                        "-m",
+                        "pytest",
+                        str(tests_dir),
+                        "-q",
+                        "--tb=no",
+                        *pytest_extra.split(),
+                    ],
+                    root,
+                    timeout=1800,
+                    env=env,
+                )
             if not data_file.exists():
                 reason = (
                     f"coverage run exit={rc}"

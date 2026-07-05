@@ -12,6 +12,7 @@ Order:
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -159,15 +160,30 @@ def run_suite(
         else:
             audit_modules = all_audits
 
-        for module_name, description in audit_modules:
-            _run_step(
-                results,
-                module_name,
-                description,
-                lambda m=module_name: _run_one_module(
-                    target_root, m, mode, fix, severity, fast
-                ),
-            )
+        # Dedup: `suite` and `quality` both run the whole test suite (quality's
+        # Q5 under coverage). When both are scheduled, run it ONCE — suite runs
+        # it under coverage and quality reuses that data. all_audits lists suite
+        # before quality, so the data file exists by the time quality reads it.
+        names = {n for n, _ in audit_modules}
+        cov_tmp = None
+        shared_cov = None
+        if {"suite", "quality"} <= names and not fast and not fix and mode != "min":
+            cov_tmp = Path(tempfile.mkdtemp(prefix="audit_shared_cov_"))
+            shared_cov = cov_tmp / ".coverage"
+
+        try:
+            for module_name, description in audit_modules:
+                _run_step(
+                    results,
+                    module_name,
+                    description,
+                    lambda m=module_name: _run_one_module(
+                        target_root, m, mode, fix, severity, fast, shared_cov
+                    ),
+                )
+        finally:
+            if cov_tmp is not None:
+                shutil.rmtree(cov_tmp, ignore_errors=True)
     elif modules is None or any(
         m in modules for m in ("wiring", "phd", "runtime", "suite", "quality")
     ):
@@ -275,6 +291,7 @@ def _run_one_module(
     fix: bool = False,
     severity: str | None = "HIGH",
     fast: bool = False,
+    shared_cov: Path | None = None,
 ) -> AuditResult:
     """Run one Python audit module via direct import."""
 
@@ -310,6 +327,10 @@ def _run_one_module(
         kwargs["fast"] = True  # skip coverage
     if module_name == "quality" and fix:
         kwargs["fix"] = True
+    if module_name == "quality" and shared_cov is not None:
+        kwargs["shared_cov"] = shared_cov  # reuse suite's coverage run
+    if module_name == "suite" and shared_cov is not None:
+        kwargs["cov_file"] = shared_cov  # instrument the one shared run
     if module_name == "phd":
         kwargs["severity"] = severity  # type: ignore[assignment]
 
