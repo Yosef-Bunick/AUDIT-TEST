@@ -38,18 +38,42 @@ pip install -e .
 
 ## Usage
 
-Bare words or flags — both work:
+Bare words or flags — both work: 
+Common keywords include:
 
 ```powershell
-audit-test                    # full audit
-audit-test min                # fast: wiring + phd + quality
-audit-test full               # complete: all checks + raw output
-audit-test fix                # auto-format (~1s)
-audit-test phd high           # PHD only, HIGH only
-audit-test phd wiring medium  # PHD + wiring, HIGH+MEDIUM
-audit-test -p <dir>           # audit a specific project
-audit-test -s "suite lint"    # skip suite + lint
+audit-test                     # full audit (high+medium+info)
+audit-test f                   # fix: auto-format (lint+black)
+audit-test m                   # min: fast wiring + phd + quality
+audit-test F                   # full: checks + raw output
+audit-test w r h               # wiring+runtime hight only
+audit-test -p <dir>            # audit a specific project
+audit-test -s "s q"            # skip whats in next value "suite + quality"
 ```
+
+### Quick keys
+
+| Key | Module | Runs |
+|-----|--------|------|
+| `p` | phd | exception discipline, security patterns, state bugs |
+| `w` | wiring | dead symbols, test-only code, config drift |
+| `r` | runtime | unbounded loops, timeouts, secrets in logs |
+| `s` | suite | pytest, solo reruns, HEAD diff baseline |
+| `q` | quality | black, ruff, mypy, CVE, coverage |
+| `l` | lint | ruff lint |
+| `b` | black | black format |
+
+**Mode shortcuts:**
+
+| Key | Does |
+|-----|------|
+| `h` | HIGH severity (default) |
+| `m` | HIGH + MEDIUM severity |
+| `v` | verbose output |
+| `f` | auto-format (~1s) |
+| `F` | full analysis |
+| `fast` | skip slow checks |
+| `-s`| skip next value or what is in quote|
 
 ### Full keyword reference
 
@@ -100,34 +124,6 @@ All forms work — bare words, `-short`, or `--long`:
 | `cppcheck` | | `--cppcheck` | cppcheck (C++) |
 | `htmlhint` | | `--htmlhint` | HTMLHint (HTML) |
 | `stylelint` | | `--stylelint` | Stylelint (CSS/SCSS) |
-
-### Quick keys
-
-| Key | Module | Runs |
-|-----|--------|------|
-| `p` | phd | exception discipline, security patterns, state bugs |
-| `w` | wiring | dead symbols, test-only code, config drift |
-| `r` | runtime | unbounded loops, timeouts, secrets in logs |
-| `s` | suite | pytest, solo reruns, HEAD diff baseline |
-| `q` | quality | black, ruff, mypy, CVE, coverage |
-| `l` | lint | ruff lint |
-| `b` | black | black format |
-
-**Mode shortcuts:**
-
-| Key | Does |
-|-----|------|
-| `h` | HIGH severity (default) |
-| `m` | HIGH + MEDIUM severity |
-| `v` | verbose output |
-| `f` | auto-format (~1s) |
-| `F` | full analysis |
-| `fast` | skip slow checks |
-
-
-
-
-
 
 
 ```powershell
