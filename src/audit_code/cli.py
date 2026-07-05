@@ -328,10 +328,6 @@ def run_audit(args: argparse.Namespace) -> int:
     if junit_out:
         junit.write(results, junit_out)
 
-    print(
-        "\N{RABBIT}  github.com/Yosef-Bunick/AUDIT-TEST — audit-test by Yosef Bunick  \N{RABBIT}"
-    )
-
     if args.report_only:
         return EXIT_PASS
 
