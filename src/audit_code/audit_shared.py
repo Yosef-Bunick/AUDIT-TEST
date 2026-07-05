@@ -6,14 +6,57 @@ Reads .audit-test-ignore from the project root.  Supports named #only groups:
   slow=[src/quality.py] /mnt/c/other  | full quality sweep
   #only
 Format per line: name=[file,...] [/path] [| description]
+
+Also supports a project-level source-encoding declaration:
+  #encoding utf-8
+used by the `check` command to verify every file decodes under that codec.
 """
 
+import codecs
 import os
 import sys
 from collections import namedtuple
 from pathlib import Path
 
 Group = namedtuple("Group", "files path description")
+
+# Encoding a scanned project's source is expected to be in.  Overridable per
+# target via a `#encoding <name>` line in that project's .audit-test-ignore.
+DEFAULT_ENCODING = "utf-8"
+
+
+def normalize_encoding(raw: str) -> str:
+    """Validate and canonicalize an encoding name (e.g. 'UTF-16' -> 'utf-16').
+
+    Accepts spaces so multi-word CLI args like 'GB 18030' resolve to 'gb18030'.
+    Raises LookupError if the name is not a known codec.
+    """
+    candidate = raw.strip()
+    try:
+        return codecs.lookup(candidate).name
+    except LookupError:
+        return codecs.lookup(candidate.replace(" ", "")).name
+
+
+def configured_encoding(root: Path | None = None) -> str:
+    """Return the `#encoding` declared in <root>/.audit-test-ignore, else utf-8.
+
+    Read from the *target* project's ignore file (default cwd) so scanning an
+    external repo honours that repo's declared source encoding.
+    """
+    base = Path.cwd() if root is None else root
+    try:
+        for line in (base / ".audit-test-ignore").read_text(
+            encoding="utf-8"
+        ).splitlines():
+            s = line.strip()
+            if s.lower().startswith("#encoding"):
+                parts = s.split(None, 1)
+                if len(parts) > 1 and parts[1].strip():
+                    return parts[1].strip()
+    except OSError:
+        pass
+    return DEFAULT_ENCODING
 
 
 def force_utf8_streams() -> None:

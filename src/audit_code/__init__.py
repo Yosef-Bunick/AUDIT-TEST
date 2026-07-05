@@ -1,3 +1,3 @@
 """audit-code: code and test verification orchestrator."""
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"

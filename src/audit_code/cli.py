@@ -26,7 +26,8 @@ import sys
 from collections import namedtuple as _nt  # audit: ok (focus helpers)
 from pathlib import Path
 
-from audit_code.audit_shared import force_utf8_streams
+from audit_code import encoding_check
+from audit_code.audit_shared import force_utf8_streams, normalize_encoding
 from audit_code.config import load_project_config
 from audit_code.gate import run_gate as gate_main
 from audit_code.models import EXIT_FAIL, EXIT_PASS
@@ -715,6 +716,59 @@ def _is_ignore_mode() -> bool:
     return "ignore" in sys.argv
 
 
+def _is_check_mode() -> bool:
+    for a in sys.argv[1:]:
+        if not a.startswith("-"):
+            return a == "check"
+    return False
+
+
+def _handle_check() -> None:
+    """`check [encoding...] [--path DIR]` — verify every file decodes as encoding.
+
+    Encoding may be several tokens ('GB 18030'); if omitted, the target's
+    #encoding (or utf-8) is used.  Path-like args or --path pick the project.
+    """
+    idx = sys.argv.index("check")
+    args = sys.argv[idx + 1 :]
+    if args and args[0] in ("help", "-h", "--help"):
+        print(
+            "check — verify every text file decodes under an encoding\n\n"
+            "  check                 use the project's #encoding (or utf-8)\n"
+            "  check <encoding>      e.g. utf-8 | ascii | UTF-16 | gb18030\n"
+            "  check <encoding> --path <dir>   check another project\n\n"
+            "Configure a project's expected encoding with a line in "
+            ".audit-test-ignore:\n  #encoding utf-8"
+        )
+        sys.exit(0)
+
+    root: str | None = None
+    enc_tokens: list[str] = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--path", "-p"):
+            root = args[i + 1] if i + 1 < len(args) else None
+            i += 2
+            continue
+        if a.startswith("/") or a.startswith("C:") or a.startswith("D:"):
+            root = a
+            i += 1
+            continue
+        enc_tokens.append(a)
+        i += 1
+
+    encoding = " ".join(enc_tokens) if enc_tokens else None
+    if encoding is not None:
+        try:
+            encoding = normalize_encoding(encoding)
+        except LookupError:
+            print(f"unknown encoding: {' '.join(enc_tokens)!r} — try utf-8, ascii, gb18030")
+            sys.exit(2)
+    target = find_target_root(root)
+    sys.exit(encoding_check.run(target, encoding))
+
+
 def main():
     _force_utf8_output()
     if _is_gate_mode():
@@ -723,6 +777,8 @@ def main():
         parser = build_gate_parser()
         args = parser.parse_args()
         sys.exit(run_gate_cmd(args))
+    elif _is_check_mode():
+        _handle_check()
     elif _is_focus_mode():
         _handle_focus()
     elif _is_ignore_mode():
