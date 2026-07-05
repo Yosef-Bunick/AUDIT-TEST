@@ -9,6 +9,8 @@ in-process consumer (quality's Q0-Q8).
 
 from pathlib import Path
 
+import pytest
+
 from audit_code import audit_shared as sh
 from audit_code import quality as q
 from audit_code.audit_shared import Group
@@ -91,3 +93,9 @@ def test_quality_py_files_respects_focus(tmp_path, monkeypatch):
     _register(monkeypatch, "probe", ["keep.py"])
     prod, _ = q._py_files(root, root / "tests")
     assert {p.name for p in prod} == {"keep.py"}
+
+
+def test_should_audit_none_path_raises():
+    """T3 edge: should_audit rejects None / non-Path input."""
+    with pytest.raises(AttributeError):
+        sh.should_audit(None)

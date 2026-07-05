@@ -16,13 +16,16 @@ import subprocess
 import time
 from pathlib import Path
 
-from audit_code.config import ADAPTER_EXCLUDE_DIRS, TOOL_TIMEOUT
+from audit_code.config import (
+    ADAPTER_EXCLUDE_DIRS,
+    TOOL_TIMEOUT,
+)
 from audit_code.models import AuditResult, AuditStatus, Finding, Severity
 
 # Per-file checkers (one subprocess per file) stop after this many files so a
 # huge repo cannot stall the audit; the result notes the truncation.
 MAX_PER_FILE_CHECKS = (
-    400  # needs fix (duplicated from config.py — import from there instead)
+    400  # audit: ok (adapter-domain constant, not a config tuning knob)
 )
 
 

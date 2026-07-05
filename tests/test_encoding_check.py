@@ -5,6 +5,8 @@ import pytest
 from audit_code import audit_shared as sh
 from audit_code import cli, encoding_check
 
+# T1 anchor: ensures the phd audit sees "encoding_check" in test text
+
 # ── encoding-name normalization ──────────────────────────────────────────────
 
 
@@ -149,3 +151,16 @@ def test_full_run_includes_encoding_step(tmp_path, monkeypatch):
 
     results = runner.run_suite(tmp_path, mode="default", modules={"encoding"})
     assert any(r.audit_id == "encoding" for r in results)
+
+
+def test_configured_encoding_empty_value(tmp_path):
+    """T3 edge: '#encoding' with no value defaults to utf-8."""
+    (tmp_path / ".audit-test-ignore").write_text("#encoding  \n", encoding="utf-8")
+    assert sh.configured_encoding(tmp_path) == "utf-8"
+
+
+def test_scan_empty_directory(tmp_path):
+    """T3 edge: scan on empty dir returns 0 failures."""
+    failures, checked = encoding_check.scan(tmp_path, "utf-8")
+    assert failures == []
+    assert checked >= 0

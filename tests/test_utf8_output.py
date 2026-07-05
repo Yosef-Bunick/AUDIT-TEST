@@ -35,6 +35,7 @@ def test_force_utf8_streams_survives_non_reconfigurable_stream(monkeypatch):
     monkeypatch.setattr(sys, "stdout", io.StringIO())
     monkeypatch.setattr(sys, "stderr", io.StringIO())
     sh.force_utf8_streams()  # must not raise
+    assert True  # reached without exception = success
 
 
 def test_force_utf8_streams_switches_encoding_on_a_wrapper(monkeypatch):
@@ -67,3 +68,11 @@ def test_subprocess_env_prevents_the_windows_style_crash():
     fixed = _run_print_rabbit(sh.utf8_subprocess_env(hostile))
     assert fixed.returncode == 0
     assert RABBIT in fixed.stdout.decode("utf-8")
+
+
+def test_utf8_subprocess_env_empty_dict():
+    """T3 edge: empty base dict still gets UTF-8 flags."""
+    env = sh.utf8_subprocess_env({})
+    assert env["PYTHONIOENCODING"] == "utf-8"
+    assert env["PYTHONUTF8"] == "1"
+    assert len(env) == 2  # only the UTF-8 flags

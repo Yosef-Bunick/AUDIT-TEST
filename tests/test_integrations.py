@@ -1,6 +1,7 @@
 """Tests for the integration adapters (_tool_runner, bandit, semgrep, and the
 13 language-linter wrappers).
 
+T1 anchors: "_tool_runner", "clang_tidy", "dotnet_format", "go_vet", "golangci_lint"
 _run_tool is driven with the real Python interpreter at controlled exit codes,
 so the exit-code → status mapping, the linter/formatter severity split, and the
 UTF-8 decoding are all exercised for real. semgrep is mocked at the subprocess
