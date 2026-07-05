@@ -20,14 +20,6 @@ All in one shot. Zero config needed.
 pip install audit-test
 ```
 
-Three commands — all identical:
-
-```powershell
-audit-test high
-audit-code high
-audit-tests high
-```
-
 Or from source:
 
 ```powershell
@@ -38,10 +30,17 @@ pip install -e .
 
 ## Usage
 
+Three commands — all identical:
+
+```powershell
+audit-test
+audit-code
+audit-tests
+```
 Bare words or flags — both work:
 
 ```powershell
-audit-test                     # full audit (HIGH only)
+audit-test                     # full audit
 audit-test v                   # full audit, verbose
 audit-test f                   # fix: auto-format (lint+black)
 audit-test min                 # min: fast wiring + phd + quality

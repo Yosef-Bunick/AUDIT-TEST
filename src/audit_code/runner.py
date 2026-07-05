@@ -322,7 +322,7 @@ def _run_one_module(
             stderr=f"Module {module_name} has no run() function",
         )
 
-    kwargs = {}
+    kwargs: dict[str, object] = {}
     if module_name == "quality" and (mode == "min" or fast):
         kwargs["fast"] = True  # skip coverage
     if module_name == "quality" and fix:
@@ -332,7 +332,7 @@ def _run_one_module(
     if module_name == "suite" and shared_cov is not None:
         kwargs["cov_file"] = shared_cov  # instrument the one shared run
     if module_name == "phd":
-        kwargs["severity"] = severity  # type: ignore[assignment]
+        kwargs["severity"] = severity
 
     return run_fn(target_root, **kwargs)
 

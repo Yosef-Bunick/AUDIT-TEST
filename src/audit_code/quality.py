@@ -471,12 +471,11 @@ def run(  # needs fix (god function 550+ lines — decompose into sub-audits)
         else:
             tmp = Path(tempfile.mkdtemp(prefix="audit_q5_"))
             json_file = tmp / "cov.json"
-            reuse = (
+            if (
                 shared_cov is not None
                 and shared_cov.exists()
                 and shared_cov.stat().st_size > 0
-            )
-            if reuse:
+            ):
                 # The suite audit already ran the whole suite under coverage;
                 # reuse its data instead of a second full test run.
                 data_file = shared_cov
