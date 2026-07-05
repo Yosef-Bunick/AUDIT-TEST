@@ -1,12 +1,15 @@
-# audit-test
+# 🐇 audit-test
 
-**One command. One policy. One report. One fail-closed verdict.**
+**One command. One policy. One fail-closed verdict.**
+
+Polyglot code auditor — syntax, wiring, PHD static analysis, runtime checks,
+test suite health, quality gates, and 13+ native linters across 9 languages.
+All in one shot. Zero config needed.
 
 <p align="center">
   <a href="#install"><img src="https://img.shields.io/badge/%F0%9F%9B%A0%EF%B8%8F-Install-f7a800" alt="Install"></a>
   <a href="#usage"><img src="https://img.shields.io/badge/%F0%9F%93%90-Usage-7dd3a8" alt="Usage"></a>
   <a href="#the-stack"><img src="https://img.shields.io/badge/%E2%9A%99%EF%B8%8F-How_It_Works-7ab3ff" alt="How It Works"></a>
-  <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/%F0%9F%91%A5-Contributing-ff69b4" alt="Contributing"></a>
   <a href="#license"><img src="https://img.shields.io/badge/%F0%9F%93%9C-CC_BY--NC--ND_4.0-d4d4d4" alt="License"></a>
 </p>
 
@@ -17,12 +20,12 @@
 pip install audit-test
 ```
 
-Three CLI commands available after install (all identical):
+Three commands — all identical:
 
 ```powershell
 audit-test high
-audit-test high
 audit-code high
+audit-tests high
 ```
 
 Or from source:
@@ -68,7 +71,7 @@ All forms work — bare words, `-short`, or `--long`:
 | **Options** |
 | | `-p` | `--path PATH` | project directory |
 | `skip` | `-s` | `--skip MODULES` | skip modules |
-| `help` | `-H` | `--help` | show help |
+| | `-H` | `--help` | show help |
 | **Core modules** |
 | `phd` `p` | | `--phd` | PHD static audit |
 | `wiring` `w` | | `--wiring` | wiring audit |
@@ -98,9 +101,34 @@ All forms work — bare words, `-short`, or `--long`:
 | `htmlhint` | | `--htmlhint` | HTMLHint (HTML) |
 | `stylelint` | | `--stylelint` | Stylelint (CSS/SCSS) |
 
-### Modules
+### Quick keys
 
-Any combination, bare words or `--flag`:
+| Key | Module | Runs |
+|-----|--------|------|
+| `p` | phd | exception discipline, security patterns, state bugs |
+| `w` | wiring | dead symbols, test-only code, config drift |
+| `r` | runtime | unbounded loops, timeouts, secrets in logs |
+| `s` | suite | pytest, solo reruns, HEAD diff baseline |
+| `q` | quality | black, ruff, mypy, CVE, coverage |
+| `l` | lint | ruff lint |
+| `b` | black | black format |
+
+**Mode shortcuts:**
+
+| Key | Does |
+|-----|------|
+| `h` | HIGH severity (default) |
+| `m` | HIGH + MEDIUM severity |
+| `v` | verbose output |
+| `f` | auto-format (~1s) |
+| `F` | full analysis |
+| `fast` | skip slow checks |
+
+
+
+
+
+
 
 ```powershell
 audit-test phd                # PHD static audit
