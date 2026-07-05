@@ -22,6 +22,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from audit_code.audit_shared import should_audit
 from audit_code.config import (
     DOC_THRESHOLD_PCT,
     MIN_FLAG_BODY_LINES,
@@ -111,6 +112,8 @@ def _py_files(root: Path, tests_dir: Path) -> tuple[list[Path], list[Path]]:
             py_file = Path(dirpath) / fn
             if any(part in EXCLUDE_DIRS for part in py_file.parts):
                 continue
+            if not should_audit(py_file):  # honour active focus group
+                continue
             (
                 tests
                 if tests_dir in py_file.parents or py_file.parent == tests_dir
@@ -167,7 +170,7 @@ def run(  # needs fix (god function 550+ lines — decompose into sub-audits)
 
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-    except Exception:  # needs fix (broad except — use AttributeError, OSError)
+    except (AttributeError, OSError):
         pass
 
     root = target_root.resolve()

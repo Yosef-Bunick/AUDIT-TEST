@@ -121,15 +121,18 @@ EXCLUDE_DIRS = _EXCLUDE_DEFAULTS | _custom
 GROUPS = _groups
 DEFAULT_PATH = _default_path
 
-# Active focus — set by 'focus' command via env var
-_ACTIVE_GROUP = os.environ.get("AUDIT_FOCUS_GROUP", "")
 
-
+# Active focus — set by the 'focus' command via env var.
+# Read at CALL time, not import time: the CLI sets AUDIT_FOCUS_GROUP inside
+# _focus_run(), which runs long after this module is imported (cli -> runner ->
+# quality/suite pull audit_shared in at startup).  Caching it at import made
+# focus a silent no-op for every in-process consumer.
 def _active_paths() -> set[str] | None:
     """Return filenames of the active group, or None if no focus."""
-    if not _ACTIVE_GROUP or _ACTIVE_GROUP not in GROUPS:
+    active = os.environ.get("AUDIT_FOCUS_GROUP", "")
+    if not active or active not in GROUPS:
         return None
-    return set(GROUPS[_ACTIVE_GROUP].files)
+    return set(GROUPS[active].files)
 
 
 def should_audit(

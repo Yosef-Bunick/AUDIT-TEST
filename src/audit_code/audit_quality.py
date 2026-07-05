@@ -525,7 +525,7 @@ def q_mutation(root: Path, counts: dict, enabled: bool):
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:  # needs fix (broad except — use AttributeError, OSError)
+    except (AttributeError, OSError):
         pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--path", default=str(ROOT), help="repo root to audit")

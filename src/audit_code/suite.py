@@ -290,7 +290,7 @@ def run(
     stdout_lines: list[str] = []
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-    except Exception:  # needs fix (broad except — use AttributeError, OSError)
+    except (AttributeError, OSError):
         pass
 
     header = f"running: pytest {TESTS_DIR} {' '.join(PYTEST_ARGS)}  (timeout {FULL_SUITE_TIMEOUT}s)"
