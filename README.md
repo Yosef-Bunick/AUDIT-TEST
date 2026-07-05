@@ -43,7 +43,7 @@ Common keywords include:
 
 ```powershell
 audit-test                     # full audit (high+medium+info)
-audit-test v                   # full audit verbose
+audit-test v                   # full audit with verbose output
 audit-test f                   # fix: auto-format (lint+black)
 audit-test m                   # min: fast wiring + phd + quality
 audit-test F                   # full: checks + raw output
