@@ -53,6 +53,23 @@ def test_skip_parts_win_over_focus(monkeypatch):
     assert sh.should_audit(Path("__pycache__/quality.py")) is False
 
 
+def test_parse_group_valid_forms():
+    name, g = sh._parse_group("fast=[a.py, b.py]", "def_path")
+    assert name == "fast" and g.files == ("a.py", "b.py") and g.path == "def_path"
+
+    name, g = sh._parse_group("slow=[x.py] /somewhere", "def_path")
+    # " /" delimiter strips the leading slash (known quirk)
+    assert name == "slow" and g.path == "somewhere"
+
+    name, g = sh._parse_group("d=[x.py] /p | full sweep", "")
+    assert g.description == "full sweep"
+
+
+def test_parse_group_rejects_malformed():
+    assert sh._parse_group("not a group line", "") is None
+    assert sh._parse_group("bad=[x.py", "") is None  # no closing bracket
+
+
 def test_quality_py_files_respects_focus(tmp_path, monkeypatch):
     root = tmp_path / "proj"
     (root / "tests").mkdir(parents=True)
