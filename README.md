@@ -273,18 +273,56 @@ Patterns match directory/file name parts (exact match, not substring).
 Add `# audit: ok` to the end of any line to suppress a finding on that line.
 Use sparingly — every suppression is counted in the summary.
 
-Applies to `wiring`, `phd`, and `runtime` audits. Example:
+Applies to `phd` and `runtime` audits (the two modules that carry Sink/SUPPRESS_RE
+machinery). The `wiring` audit has no suppression mechanism — it reports all
+findings unconditionally.
+
+Only suppress when the audit is **wrong**: env-var-gated code paths, CLI entry
+points that can't be covered, and parse-time helpers wiring can't detect through
+its import-graph walk.
+
+### `#needs fix`
+
+For known issues you can't fix right now but don't want to suppress permanently.
+The annotation flags intent without silencing the finding:
 
 ```python
-except Exception:         # audit: ok  (intentional swallow — benign)
-TOOL_TIMEOUT = 600        # audit: ok  (tool config, not a tuning knob)
-subprocess.run(cmd)       # audit: ok  (audit tools ARE subprocess runners)
+except Exception:         #needs fix (broad except — use AttributeError, OSError)
+sys.setrecursionlimit(10000)  #needs fix (iterative Tarjan SCC instead of recursion hack)
 ```
+
+Unlike `# audit: ok`, this does NOT suppress the finding. The audit still reports
+it — the annotation is for humans (and future you) to know the issue is acknowledged
+and needs real remediation, not a suppressive bandaid.
 
 ## Requirements
 
-Python 3.10+, git, pytest
-Optional (auto-detected): `coverage`, `black`, `ruff`, `mypy`, `pip-audit`, `mutmut`
+| Tool | Required | Used by |
+|------|----------|---------|
+| Python 3.10+ | ✓ | all modules |
+| git | ✓ | gate, suite baseline, wiring (repo root detection) |
+| pytest | ✓ | suite, quality (Q5 coverage) |
+| `coverage` | — | quality Q5 (def execution proof) |
+| `black` | — | quality Q1 / `fix` mode |
+| `ruff` | — | quality Q2 / `lint` / `fix` mode |
+| `mypy` | — | quality Q3 (type checking) |
+| `pip-audit` or `safety` | — | quality Q4 (CVE scan) |
+| `mutmut` | — | quality Q8 / gate G4 (mutation testing) |
+| `semgrep` | — | security integration (structural) |
+| `bandit` | — | security integration (Python SAST) |
+
+**Native linters** (auto-detected per-language; honest SKIP if tool not installed):
+
+| Language | Tools |
+|----------|-------|
+| JS / TS | `eslint`, `prettier` |
+| Java | `checkstyle`, `pmd` |
+| Go | `go vet`, `golangci-lint` |
+| Rust | `cargo clippy`, `rustfmt` |
+| C# | `dotnet format` |
+| C / C++ | `clang-tidy`, `cppcheck` |
+| HTML / CSS | `htmlhint`, `stylelint` |
+| SQL | `sqlfluff` |
 
 ## License
 

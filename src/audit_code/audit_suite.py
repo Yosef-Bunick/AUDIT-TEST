@@ -223,7 +223,7 @@ def _s3_s5_report(out: str, r: dict, med: int, info: int) -> tuple[int, int]:
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:  # audit: ok
+    except Exception:  # needs fix (broad except — use AttributeError, OSError)
         pass
     strict = "--strict" in sys.argv
     fast = "--fast" in sys.argv

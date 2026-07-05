@@ -142,7 +142,7 @@ def _def_spans(path: Path) -> list[tuple[str, int, int, int]]:
     return out
 
 
-def run(  # audit: ok  (orchestrator — all quality gates in one function)
+def run(  # needs fix (god function 550+ lines — decompose into sub-audits)
     target_root: Path,
     fast: bool = False,
     strict_mypy: bool = False,
@@ -167,7 +167,7 @@ def run(  # audit: ok  (orchestrator — all quality gates in one function)
 
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-    except Exception:  # audit: ok
+    except Exception:  # needs fix (broad except — use AttributeError, OSError)
         pass
 
     root = target_root.resolve()

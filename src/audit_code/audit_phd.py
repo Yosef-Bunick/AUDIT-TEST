@@ -1063,7 +1063,9 @@ def main():
                         edges[src].add(a.name)
     idx, low, onstk, stk = {}, {}, set(), []
     counter = [0]
-    sys.setrecursionlimit(10000)
+    sys.setrecursionlimit(
+        10000
+    )  # needs fix (iterative Tarjan SCC instead of recursion hack)
 
     def strongconnect(v):
         idx[v] = low[v] = counter[0]
