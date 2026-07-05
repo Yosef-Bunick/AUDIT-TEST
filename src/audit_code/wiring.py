@@ -15,6 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from audit_code.audit_shared import utf8_subprocess_env
 from audit_code.models import (
     AuditResult,
     AuditStatus,
@@ -37,6 +38,7 @@ def run(target_root: Path, strict: bool = True) -> AuditResult:
             errors="replace",
             timeout=300,
             cwd=str(target_root),
+            env=utf8_subprocess_env(),
         )
     except subprocess.TimeoutExpired:
         return AuditResult(

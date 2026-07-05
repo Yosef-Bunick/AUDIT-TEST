@@ -57,6 +57,9 @@ def run_one(script: str):
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
+        # force the child interpreter to UTF-8 stdio on every OS (Windows pipes
+        # default to cp1252, which crashes on the audit's Unicode glyphs)
+        env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
     )
     out = proc.stdout or ""
     high = med = info = None

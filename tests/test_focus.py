@@ -58,11 +58,17 @@ def test_parse_group_valid_forms():
     assert name == "fast" and g.files == ("a.py", "b.py") and g.path == "def_path"
 
     name, g = sh._parse_group("slow=[x.py] /somewhere", "def_path")
-    # " /" delimiter strips the leading slash (known quirk)
-    assert name == "slow" and g.path == "somewhere"
+    assert name == "slow" and g.path == "/somewhere"  # leading slash preserved
+
+    name, g = sh._parse_group("win=[x.py] C:\\proj", "")
+    assert g.path == "C:\\proj"  # Windows drive path preserved
 
     name, g = sh._parse_group("d=[x.py] /p | full sweep", "")
-    assert g.description == "full sweep"
+    assert g.path == "/p" and g.description == "full sweep"
+
+    # description WITHOUT a path must still parse (regression: used to be dropped)
+    name, g = sh._parse_group("e=[x.py]  | just desc", "")
+    assert name == "e" and g.files == ("x.py",) and g.description == "just desc"
 
 
 def test_parse_group_rejects_malformed():

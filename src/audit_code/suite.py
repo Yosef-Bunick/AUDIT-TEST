@@ -9,6 +9,7 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
+from audit_code.audit_shared import force_utf8_streams
 from audit_code.config import (
     FULL_SUITE_TIMEOUT,
     MAX_SOLO_RERUNS,
@@ -288,10 +289,7 @@ def run(
     for both audits instead of two)."""
     findings: list[Finding] = []
     stdout_lines: list[str] = []
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-    except (AttributeError, OSError):
-        pass
+    force_utf8_streams()
 
     header = f"running: pytest {TESTS_DIR} {' '.join(PYTEST_ARGS)}  (timeout {FULL_SUITE_TIMEOUT}s)"
     stdout_lines.append(header)

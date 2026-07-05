@@ -9,10 +9,38 @@ Format per line: name=[file,...] [/path] [| description]
 """
 
 import os
+import sys
 from collections import namedtuple
 from pathlib import Path
 
 Group = namedtuple("Group", "files path description")
+
+
+def force_utf8_streams() -> None:
+    """Make stdout AND stderr emit UTF-8 (replace on error), on every platform.
+
+    Windows consoles and pipes default to cp1252/cp437, which raise
+    UnicodeEncodeError on the audit's glyphs (🐇, ═, ✓, ✨).  macOS/Linux are
+    almost always UTF-8 already, so this is a harmless no-op there.  Guarded
+    because captured/replaced streams (pytest, StringIO) lack reconfigure().
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, OSError):
+            pass
+
+
+# Environment additions that force a spawned Python worker to start with UTF-8
+# stdio regardless of the host locale — the child sets its pipe encoding at
+# interpreter startup, before any reconfigure() call can run.
+UTF8_ENV = {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
+
+def utf8_subprocess_env(base: dict | None = None) -> dict:
+    """Return a copy of *base* (default os.environ) with UTF-8 stdio forced."""
+    return {**(os.environ if base is None else base), **UTF8_ENV}
+
 
 # ── Built-in defaults ────────────────────────────────────────────────────────
 
@@ -53,25 +81,23 @@ def _parse_group(
 ) -> tuple[str, Group] | None:  # audit: ok (parse helper)
     """Parse 'fast=[main.py,cli.py] /x  | desc' into (name, Group)."""
     line = line.strip()
-    # description
+    # description (strip first so it can't corrupt the file-list terminator)
     desc = ""
     if "|" in line:
         line, desc = line.split("|", 1)
         desc = desc.strip()
-    # path override
-    path = default_path
-    if " /" in line:
-        line, path_part = line.rsplit(" /", 1)
-        path = path_part.strip()
     # name=[...]
     if "=[" not in line:
         return None
     name, rest = line.split("=[", 1)
     name = name.strip()
-    if not rest.endswith("]"):
+    # Everything up to the closing ']' is the file list; whatever follows is the
+    # optional path, kept verbatim so a leading '/' or Windows 'C:' survives.
+    if "]" not in rest:
         return None
-    files_str = rest[:-1]
+    files_str, after = rest.split("]", 1)
     files = [f.strip() for f in files_str.split(",") if f.strip()]
+    path = after.strip() or default_path
     return name, Group(tuple(files), path, desc)
 
 

@@ -22,7 +22,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from audit_code.audit_shared import should_audit
+from audit_code.audit_shared import force_utf8_streams, should_audit
 from audit_code.config import (
     DOC_THRESHOLD_PCT,
     MIN_FLAG_BODY_LINES,
@@ -168,10 +168,7 @@ def run(  # needs fix (god function 550+ lines — decompose into sub-audits)
     if fix:
         fast = True
 
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-    except (AttributeError, OSError):
-        pass
+    force_utf8_streams()
 
     root = target_root.resolve()
     tests_dir = (root / tests).resolve()

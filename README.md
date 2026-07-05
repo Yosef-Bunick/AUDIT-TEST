@@ -177,13 +177,14 @@ python run_all_audits.py       # orchestrate all five into one report
 
 ## The stack
 
-| Audit | Question it answers |
-|---|---|
-| wiring | **Is it connected?** Dead symbols, test-only code, config key drift |
-| phd | **Does it meet the bar?** Exception discipline, security patterns, state bugs |
-| runtime | **Will it hang or crash?** Unbounded loops, missing timeouts, secrets in logs |
-| suite | **Is the test suite healthy?** Runs pytest, classifies real vs pollution failures |
-| quality | **External gates + execution truth.** Black, ruff, mypy, CVE scan, coverage |
+| Audit | Question it answers | Full rules |
+|---|---|---|
+| wiring | **Is it connected?** Dead symbols, test-only code, config key drift | [docs/wiring.md](docs/wiring.md) |
+| phd | **Does it meet the bar?** Exception discipline, security patterns, state bugs | [docs/phd.md](docs/phd.md) — 37 rules |
+| runtime | **Will it hang or crash?** Unbounded loops, missing timeouts, secrets in logs | [docs/runtime.md](docs/runtime.md) — 13 checks |
+| suite | **Is the test suite healthy?** Runs pytest, classifies real vs pollution failures | [docs/suite.md](docs/suite.md) |
+| quality | **External gates + execution truth.** Black, ruff, mypy, CVE scan, coverage | [docs/quality.md](docs/quality.md) — Q0-Q8 |
+| integrations | **External tools.** semgrep, bandit, +14 native linters across 9 languages | [docs/integrations.md](docs/integrations.md) |
 
 ## Languages
 

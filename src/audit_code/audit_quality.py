@@ -60,7 +60,7 @@ import tempfile
 from pathlib import Path
 
 from audit_code.audit_config import DOC_THRESHOLD_PCT, MIN_FLAG_BODY_LINES, TOOL_TIMEOUT
-from audit_code.audit_shared import EXCLUDE_DIRS
+from audit_code.audit_shared import EXCLUDE_DIRS, force_utf8_streams
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -523,10 +523,7 @@ def q_mutation(root: Path, counts: dict, enabled: bool):
 
 
 def main():
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, OSError):
-        pass
+    force_utf8_streams()
     ap = argparse.ArgumentParser()
     ap.add_argument("--path", default=str(ROOT), help="repo root to audit")
     ap.add_argument("--tests", default="tests", help="tests dir relative to root")

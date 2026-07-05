@@ -62,11 +62,9 @@ def test_parse_groups_reads_only_block():
     assert default == "/base"
     assert set(groups) == {"fast"}
     g = groups["fast"]
-    # NOTE: the " /" delimiter strips the leading slash — "/proj" is stored as
-    # "proj" (a known quirk; see the bug report accompanying these tests).
     assert (
         g.files == ("main.py", "cli.py")
-        and g.path == "proj"
+        and g.path == "/proj"  # leading slash preserved
         and g.desc == "quick sweep"
     )
 
@@ -113,6 +111,23 @@ def test_focus_add_del_path_desc(ig, monkeypatch, capsys):
     assert _run(monkeypatch, ["focus", "desc", "grp", "my", "desc"]) == 0
     text = ig.read_text(encoding="utf-8")
     assert "b.py" in text and "/somewhere" in text and "my desc" in text
+
+
+def test_focus_desc_survives_reread(ig, monkeypatch):
+    """Regression: setting a description used to silently delete the group."""
+    _run(monkeypatch, ["focus", "add", "grp", "a.py"])
+    _run(monkeypatch, ["focus", "desc", "grp", "my", "description"])
+    groups, _ = cli._parse_groups(cli._ig_read())
+    assert "grp" in groups and groups["grp"].desc == "my description"
+    assert groups["grp"].files == ("a.py",)
+
+
+def test_focus_absolute_path_roundtrips(ig, monkeypatch):
+    """Regression: absolute group paths used to lose their leading slash."""
+    _run(monkeypatch, ["focus", "add", "grp", "a.py"])
+    _run(monkeypatch, ["focus", "path", "grp", "/mnt/c/other"])
+    groups, _ = cli._parse_groups(cli._ig_read())
+    assert groups["grp"].path == "/mnt/c/other"
 
 
 def test_focus_info_and_missing_group(ig, monkeypatch, capsys):

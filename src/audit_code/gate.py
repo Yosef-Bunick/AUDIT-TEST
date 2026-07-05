@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from audit_code.audit_shared import utf8_subprocess_env
+
 _SCRIPT = Path(__file__).resolve().parent / "audit_gate.py"
 
 
@@ -48,5 +50,6 @@ def run_gate(
         capture_output=False,  # stream to terminal so user sees gate progress
         cwd=str(target_root),
         timeout=3600,
+        env=utf8_subprocess_env(),
     )
     return proc.returncode

@@ -51,6 +51,7 @@ from collections import Counter
 from pathlib import Path
 
 from audit_code.audit_config import FULL_SUITE_TIMEOUT, MAX_SOLO_RERUNS, SOLO_TIMEOUT
+from audit_code.audit_shared import force_utf8_streams
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 TESTS_DIR = "tests"
@@ -221,10 +222,7 @@ def _s3_s5_report(out: str, r: dict, med: int, info: int) -> tuple[int, int]:
 
 
 def main():
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, OSError):
-        pass
+    force_utf8_streams()
     strict = "--strict" in sys.argv
     fast = "--fast" in sys.argv
     baseline = "--baseline" in sys.argv

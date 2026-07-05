@@ -26,6 +26,7 @@ import sys
 from collections import namedtuple as _nt  # audit: ok (focus helpers)
 from pathlib import Path
 
+from audit_code.audit_shared import force_utf8_streams
 from audit_code.config import load_project_config
 from audit_code.gate import run_gate as gate_main
 from audit_code.models import EXIT_FAIL, EXIT_PASS
@@ -351,11 +352,7 @@ def run_gate_cmd(args: argparse.Namespace) -> int:
 
 
 def _force_utf8_output() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-        except (AttributeError, OSError):
-            pass
+    force_utf8_streams()
 
 
 # ── focus / ignore commands ──────────────────────────────────────────────────
@@ -409,12 +406,15 @@ def _parse_groups(lines: list[str]) -> tuple[dict[str, _Grp], str]:
         if "|" in s:
             s, desc = s.split("|", 1)
             desc = desc.strip()
-        if " /" in s:
-            s, path = s.rsplit(" /", 1)
-            path = path.strip()
-        if "=[" in s and s.endswith("]"):
+        if "=[" in s:
             name, rest = s.split("=[", 1)
-            files = tuple(f.strip() for f in rest[:-1].split(",") if f.strip())
+            # file list ends at the first ']'; the remainder is the path, kept
+            # verbatim so a leading '/' or Windows 'C:' survives.
+            if "]" not in rest:
+                continue
+            files_str, after = rest.split("]", 1)
+            files = tuple(f.strip() for f in files_str.split(",") if f.strip())
+            path = after.strip() or default
             groups[name.strip()] = _Grp(files, path, desc)
     return groups, default
 
@@ -439,10 +439,11 @@ def _rebuild_file(
         for name, g in sorted(groups.items()):
             line = f"{name}=[{', '.join(g.files)}]"
             if g.path and g.path != default_path:
-                sep = " " if g.path.startswith("/") or g.path.startswith("C:") else " /"
-                line += f"{sep}{g.path}"
+                # plain space separator; the parser takes everything after ']'
+                # as the path, so the value round-trips exactly as written.
+                line += f" {g.path}"
             if g.desc:
-                line += f"  | {g.desc}"
+                line += f" | {g.desc}"
             out.append(line)
         out.append("#only")
     return out

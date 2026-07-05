@@ -54,7 +54,7 @@ from audit_code.audit_config import (
     SUITE_TIMEOUT,
 )
 from audit_code.audit_quality import _def_spans  # noqa: E402
-from audit_code.audit_shared import EXCLUDE_DIRS
+from audit_code.audit_shared import EXCLUDE_DIRS, force_utf8_streams
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 # Allow --path override for audit-code wrapper
@@ -521,10 +521,7 @@ def _run_gates(
 
 
 def main():
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, OSError):
-        pass
+    force_utf8_streams()
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--path", default=None, help="project root (for audit-code wrapper)"

@@ -11,7 +11,6 @@ Order:
 
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -19,6 +18,7 @@ from pathlib import Path
 from audit_code import phd, quality, runtime, suite, wiring
 from audit_code.adapters import discover
 from audit_code.adapters.base import run_tool, which
+from audit_code.audit_shared import force_utf8_streams
 from audit_code.config import FULL_SUITE_TIMEOUT
 from audit_code.models import AuditResult, AuditStatus
 from audit_code.profiles import load as profile_load
@@ -56,11 +56,7 @@ def run_suite(
     # Status glyphs (✓ ✗ ☠) below crash a cp1252 stdout with UnicodeEncodeError.
     # The CLI forces UTF-8, but a direct/library caller may not — do it here too
     # so any entry into the runner is safe. Idempotent; guarded for capture bufs.
-    for _stream in (sys.stdout, sys.stderr):
-        try:
-            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-        except (AttributeError, OSError):
-            pass
+    force_utf8_streams()
 
     results: list[AuditResult] = []
     start = time.monotonic()
