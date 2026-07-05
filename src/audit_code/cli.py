@@ -279,7 +279,6 @@ def _resolve_modules(args: argparse.Namespace) -> set[str] | None:
             "s": "suite",
             "l": "lint",
             "b": "black",
-
         }
         raw = {s.strip() for s in re.split(r"[, ]+", args.skip) if s.strip()}
         skip_set = {_MODULE_SHORT.get(x, x) for x in raw}
@@ -410,14 +409,14 @@ def _expand_bare_words() -> None:
         "s": "--suite",
         # severity
         "high": "--high",  # h, -h
-        "medium": "--medium", # m, -m
-        "info": "--info", # i , -i 
-        "all": "--all", # a , -a 
+        "medium": "--medium",  # m, -m
+        "info": "--info",  # i , -i
+        "all": "--all",  # a , -a
         # modes
-        "fix": "--fix", # f -f 
-        "full": "--full", # F , -F
-        "min": "--min", 
-        "verbose": "--verbose", # v , -v
+        "fix": "--fix",  # f -f
+        "full": "--full",  # F , -F
+        "min": "--min",
+        "verbose": "--verbose",  # v , -v
         "strict": "--strict",
         "report": "--report-only",
         # single-letter shortcuts

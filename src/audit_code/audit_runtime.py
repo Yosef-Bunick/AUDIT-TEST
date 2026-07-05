@@ -144,7 +144,7 @@ import re
 import sys
 from pathlib import Path
 
-from audit_code.audit_shared import SKIP_PARTS
+from audit_code.audit_shared import should_audit
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 # Allow --path override for audit-code wrapper
@@ -203,7 +203,7 @@ def is_audit_file(p: Path) -> bool:
 def collect():
     prod, test = {}, {}
     for p in ROOT.rglob("*.py"):
-        if is_audit_file(p) or any(part in SKIP_PARTS for part in p.parts):
+        if is_audit_file(p) or not should_audit(p):
             continue
         try:
             txt = p.read_text(encoding="utf-8", errors="replace")
@@ -853,11 +853,9 @@ def audit_dependencies(trees):
     # Every .py stem in the repo counts as local: the engine uses flat
     # sys.path imports (`import checkpoint`, `import router`) for modules
     # living in subpackages - phd's D3 flags the style; they are not deps.
-    local = {
-        p.stem
-        for p in ROOT.rglob("*.py")
-        if not any(part in SKIP_PARTS for part in p.parts)
-    } | {d.name for d in ROOT.iterdir() if d.is_dir()}
+    local = {p.stem for p in ROOT.rglob("*.py") if should_audit(p)} | {
+        d.name for d in ROOT.iterdir() if d.is_dir()
+    }
     stdlib = getattr(sys, "stdlib_module_names", set())
     imported = set()
     for tree in trees.values():

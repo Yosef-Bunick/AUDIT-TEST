@@ -120,7 +120,7 @@ import re
 import sys
 from pathlib import Path
 
-from audit_code.audit_shared import SKIP_PARTS
+from audit_code.audit_shared import should_audit
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 # Allow --path override for audit-code wrapper
@@ -231,7 +231,7 @@ def is_test(p: Path) -> bool:
 def collect():
     prod, test = {}, {}
     for p in ROOT.rglob("*.py"):
-        if p.name in SELF_NAMES or any(part in SKIP_PARTS for part in p.parts):
+        if p.name in SELF_NAMES or not should_audit(p):
             continue
         try:
             txt = p.read_text(encoding="utf-8", errors="replace")

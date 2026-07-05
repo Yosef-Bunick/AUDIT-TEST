@@ -129,7 +129,7 @@ import re
 import sys
 from pathlib import Path
 
-from audit_code.audit_shared import SKIP_PARTS
+from audit_code.audit_shared import should_audit
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 # Allow --path override for audit-code wrapper
@@ -200,7 +200,7 @@ def collect_files():
             p.name.startswith("audit_") or p.name == "run_all_audits.py"
         ):
             continue
-        if any(part in SKIP_PARTS for part in p.parts):
+        if not should_audit(p):
             continue
         try:
             txt = p.read_text(encoding="utf-8", errors="replace")
