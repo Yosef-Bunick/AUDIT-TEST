@@ -48,23 +48,55 @@ audit-test -p <dir>           # audit a specific project
 audit-test -s "suite lint"    # skip suite + lint
 ```
 
-### Flags quick reference
+### Full keyword reference
 
-| Short | Long | Does |
-|---|---|---|
-| `-h` | `--high` | HIGH severity only (default) |
-| `-m` | `--medium` | HIGH + MEDIUM severity |
-| | `--info` | HIGH + MEDIUM + INFO |
-| | `--all` | all findings |
-| `-v` | `--verbose` | full detail output |
-| `-f` | `--fix` | auto-format |
-| `-F` | `--full` | complete analysis |
-| | `--fast` | skip slow checks (coverage, mutation) |
-| `-p` | `--path` | project directory |
-| `-s` | `--skip` | skip modules (comma/space) |
-| `-H` | `--help` | show help |
-| | `--semgrep` | semgrep security scan |
-| | `--bandit` | bandit security scan |
+All forms work — bare words, `-short`, or `--long`:
+
+| Bare | Short | Long | Does |
+|---|---|---|---|
+| **Severity** |
+| `high` | `-h` | `--high` | HIGH only (default) |
+| `medium` | `-m` | `--medium` | HIGH + MEDIUM |
+| `info` | | `--info` | HIGH + MEDIUM + INFO |
+| `all` | | `--all` | all findings |
+| **Modes** |
+| `fix` | `-f` | `--fix` | auto-format (quality) |
+| `full` | `-F` | `--full` | complete analysis |
+| `fast` | | `--fast` | skip slow checks |
+| `verbose` | `-v` | `--verbose` | full detail output |
+| `min` | | `--min` | fast: wiring + phd + quality |
+| **Options** |
+| | `-p` | `--path PATH` | project directory |
+| `skip` | `-s` | `--skip MODULES` | skip modules |
+| `help` | `-H` | `--help` | show help |
+| **Core modules** |
+| `phd` `p` | | `--phd` | PHD static audit |
+| `wiring` `w` | | `--wiring` | wiring audit |
+| `runtime` `r` | | `--runtime` | runtime audit |
+| `suite` `s` | | `--suite` | test suite audit |
+| `quality` `q` | | `--quality` | quality gates |
+| `syntax` | | `--syntax` | all language syntax checks |
+| `python` | | `--python` | Python syntax only |
+| `tests` | | `--tests` | non-Python test suites |
+| `lint` `l` | | `--lint` | ruff lint |
+| `black` `b` | | `--black` | black format |
+| **Security integrations** |
+| `semgrep` | | `--semgrep` | semgrep (structural) |
+| `bandit` | | `--bandit` | bandit (Python security) |
+| **Language integrations** — SKIP if tool not installed |
+| `eslint` | | `--eslint` | ESLint (JS/TS) |
+| `prettier` | | `--prettier` | Prettier (JS/TS/CSS) |
+| `checkstyle` | | `--checkstyle` | Checkstyle (Java) |
+| `pmd` | | `--pmd` | PMD (Java) |
+| `go-vet` | | `--go-vet` | go vet (Go) |
+| `golangci-lint` | | `--golangci-lint` | golangci-lint (Go) |
+| `clippy` | | `--clippy` | cargo clippy (Rust) |
+| `rustfmt` | | `--rustfmt` | rustfmt (Rust) |
+| `dotnet-format` | | `--dotnet-format` | dotnet format (C#) |
+| `clang-tidy` | | `--clang-tidy` | clang-tidy (C++) |
+| `cppcheck` | | `--cppcheck` | cppcheck (C++) |
+| `htmlhint` | | `--htmlhint` | HTMLHint (HTML) |
+| `stylelint` | | `--stylelint` | Stylelint (CSS/SCSS) |
 
 ### Modules
 

@@ -1,15 +1,37 @@
-"""External tool integrations."""
+"""Integration dispatch — maps module names to integration run() functions."""
 
-from audit_code.integrations.codeql import run as _codeql
-from audit_code.integrations.dependency_scan import run as _deps
-from audit_code.integrations.megalinter import run as _megalinter
-from audit_code.integrations.secret_scan import run as _secret
-from audit_code.integrations.semgrep import run as _semgrep
+from audit_code.integrations import (
+    bandit,
+    checkstyle,
+    clang_tidy,
+    clippy,
+    cppcheck,
+    dotnet_format,
+    eslint,
+    go_vet,
+    golangci_lint,
+    htmlhint,
+    pmd,
+    prettier,
+    rustfmt,
+    semgrep,
+    stylelint,
+)
 
-TOOLS = {
-    "semgrep": _semgrep,
-    "megalinter": _megalinter,
-    "codeql": _codeql,
-    "secret-scan": _secret,
-    "dependency-scan": _deps,
+INTEGRATIONS = {
+    "bandit": bandit,
+    "checkstyle": checkstyle,
+    "clang-tidy": clang_tidy,
+    "clippy": clippy,
+    "cppcheck": cppcheck,
+    "dotnet-format": dotnet_format,
+    "eslint": eslint,
+    "go-vet": go_vet,
+    "golangci-lint": golangci_lint,
+    "htmlhint": htmlhint,
+    "pmd": pmd,
+    "prettier": prettier,
+    "rustfmt": rustfmt,
+    "semgrep": semgrep,
+    "stylelint": stylelint,
 }

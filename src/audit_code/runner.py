@@ -11,6 +11,7 @@ Order:
 
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -20,6 +21,19 @@ from audit_code.adapters.base import run_tool, which
 from audit_code.config import FULL_SUITE_TIMEOUT
 from audit_code.models import AuditResult, AuditStatus
 from audit_code.profiles import load as profile_load
+
+# Native linters keyed by the adapter language that triggers them. Dispatched
+# only when that language is actually detected (or the linter is named
+# explicitly) — running eslint on a Python-only repo is noise, not coverage.
+LANGUAGE_LINTERS: dict[str, list[tuple[str, str]]] = {
+    "javascript": [("eslint", "ESLint"), ("prettier", "Prettier")],
+    "java": [("checkstyle", "Checkstyle"), ("pmd", "PMD")],
+    "go": [("go-vet", "go vet"), ("golangci-lint", "golangci-lint")],
+    "rust": [("clippy", "cargo clippy"), ("rustfmt", "rustfmt")],
+    "csharp": [("dotnet-format", "dotnet format")],
+    "cpp": [("clang-tidy", "clang-tidy"), ("cppcheck", "cppcheck")],
+    "html": [("htmlhint", "HTMLHint"), ("stylelint", "Stylelint")],
+}
 
 
 def run_suite(
@@ -38,6 +52,15 @@ def run_suite(
     modules: if set, only run these checks. Values: syntax, wiring, phd,
              runtime, suite, quality, tests. None = all (mode logic).
     """
+    # Status glyphs (✓ ✗ ☠) below crash a cp1252 stdout with UnicodeEncodeError.
+    # The CLI forces UTF-8, but a direct/library caller may not — do it here too
+    # so any entry into the runner is safe. Idempotent; guarded for capture bufs.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, OSError):
+            pass
+
     results: list[AuditResult] = []
     start = time.monotonic()
 
@@ -80,6 +103,27 @@ def run_suite(
                 f"{adapter.language} test suite",
                 lambda c=cmd, lang=adapter.language: _run_test_suite(
                     target_root, lang, c
+                ),
+            )
+
+    # 2.5 Native linters for detected (or explicitly named) languages.
+    #     Auto mode runs a linter only when its language is present and the
+    #     run is not `min`; an explicit `-s`/module request always runs it.
+    detected_langs = {a.language for a in adapters}
+    for lang, linters in LANGUAGE_LINTERS.items():
+        for module_name, desc in linters:
+            if modules is not None:
+                run_it = module_name in modules  # explicit request wins
+            else:
+                run_it = mode != "min" and lang in detected_langs
+            if not run_it:
+                continue
+            _run_step(
+                results,
+                module_name,
+                desc,
+                lambda m=module_name: _run_one_module(
+                    target_root, m, mode, fix, severity, fast
                 ),
             )
 
@@ -242,16 +286,11 @@ def _run_one_module(
     if module_name in ("lint", "black"):
         return _run_standalone_tool(target_root, module_name, fix)
 
-    # integrations
-    if module_name == "semgrep":
-        from audit_code.integrations import semgrep
+    # integrations (semgrep, bandit, eslint, prettier, etc.)
+    from audit_code.integrations import INTEGRATIONS
 
-        return semgrep.run(target_root)
-
-    if module_name == "bandit":
-        from audit_code.integrations import bandit
-
-        return bandit.run(target_root)
+    if module_name in INTEGRATIONS:
+        return INTEGRATIONS[module_name].run(target_root)
 
     mod = module_map.get(module_name)
     run_fn = getattr(mod, "run", None)
@@ -302,7 +341,13 @@ def _run_standalone_tool(target_root: Path, tool: str, fix: bool) -> AuditResult
 
     try:
         proc = subprocess.run(
-            cmd, cwd=str(target_root), capture_output=True, text=True, timeout=120
+            cmd,
+            cwd=str(target_root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
         )
     except subprocess.TimeoutExpired:
         return AuditResult(

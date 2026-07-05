@@ -43,6 +43,19 @@ ALL_MODULES = {
     "black",
     "semgrep",
     "bandit",
+    "eslint",
+    "prettier",
+    "checkstyle",
+    "pmd",
+    "go-vet",
+    "golangci-lint",
+    "clippy",
+    "rustfmt",
+    "dotnet-format",
+    "clang-tidy",
+    "cppcheck",
+    "htmlhint",
+    "stylelint",
 }
 
 
@@ -174,6 +187,23 @@ def build_audit_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--bandit", action="store_true", help="Run bandit security scan"
     )
+    parser.add_argument("--eslint", action="store_true", help="Run eslint")
+    parser.add_argument("--prettier", action="store_true", help="Run prettier")
+    parser.add_argument("--checkstyle", action="store_true", help="Run checkstyle")
+    parser.add_argument("--pmd", action="store_true", help="Run pmd")
+    parser.add_argument("--go-vet", action="store_true", help="Run go-vet")
+    parser.add_argument(
+        "--golangci-lint", action="store_true", help="Run golangci-lint"
+    )
+    parser.add_argument("--clippy", action="store_true", help="Run clippy")
+    parser.add_argument("--rustfmt", action="store_true", help="Run rustfmt")
+    parser.add_argument(
+        "--dotnet-format", action="store_true", help="Run dotnet-format"
+    )
+    parser.add_argument("--clang-tidy", action="store_true", help="Run clang-tidy")
+    parser.add_argument("--cppcheck", action="store_true", help="Run cppcheck")
+    parser.add_argument("--htmlhint", action="store_true", help="Run htmlhint")
+    parser.add_argument("--stylelint", action="store_true", help="Run stylelint")
     parser.add_argument(
         "-s",
         "--skip",
@@ -230,7 +260,10 @@ def _resolve_modules(args: argparse.Namespace) -> set[str] | None:
     --fix with no module flags defaults to quality-only.
     --skip removes modules from the default set.
     """
-    selected = {m for m in ALL_MODULES if getattr(args, m, False)}
+    # argparse maps --go-vet to args.go_vet; module identity keeps the hyphen
+    # (it must match the INTEGRATIONS / LANGUAGE_LINTERS keys), so look up the
+    # underscore form of the attribute.
+    selected = {m for m in ALL_MODULES if getattr(args, m.replace("-", "_"), False)}
     if not selected and args.fix:
         return {"quality"}
     if selected:
@@ -347,6 +380,19 @@ def _expand_bare_words() -> None:
         "black": "--black",
         "semgrep": "--semgrep",
         "bandit": "--bandit",
+        "eslint": "--eslint",
+        "prettier": "--prettier",
+        "checkstyle": "--checkstyle",
+        "pmd": "--pmd",
+        "go-vet": "--go-vet",
+        "golangci-lint": "--golangci-lint",
+        "clippy": "--clippy",
+        "rustfmt": "--rustfmt",
+        "dotnet-format": "--dotnet-format",
+        "clang-tidy": "--clang-tidy",
+        "cppcheck": "--cppcheck",
+        "htmlhint": "--htmlhint",
+        "stylelint": "--stylelint",
         # module shortcuts
         "q": "--quality",
         "w": "--wiring",
