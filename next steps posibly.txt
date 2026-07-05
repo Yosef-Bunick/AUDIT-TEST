@@ -1,0 +1,134 @@
+Beyond what you have (audit-test + DLL code lookup), here's what moves the needle on speed and accuracy:
+
+    Speed (the install/test loop):
+
+    Tool: uv
+    What it does: pip replacement — 10-100x faster installs
+    Impact: uv pip install -e . burns seconds instead of 30+
+    ────────────────────────────────────────
+    Tool: pytest-xdist
+    What it does: Parallel test execution (-n auto)
+    Impact: Your 364 tests in 7s → ~2s
+    ────────────────────────────────────────
+    Tool: mypyc
+    What it does: Compile Python to C extensions
+    Impact: 2-4x speedup on audit modules just by adding mypyc to build
+    ────────────────────────────────────────
+    Tool: ruff (formatter)
+    What it does: Drop black — ruff formats 10-100x faster
+    Impact: ruff format instead of black, same output, instant
+    ────────────────────────────────────────
+    Tool: pre-commit
+    What it does: Auto-run audit + lint before every commit
+    Impact: Catches issues before they hit CI
+
+    Accuracy (finding bugs you can't see):
+
+    Tool: pyright / basedpyright
+    What it catches: Type narrowing, exhaustiveness checks mypy misses
+    ────────────────────────────────────────
+    Tool: refurb
+    What it catches: 100+ code quality fixes ruff doesn't have (e.g., if x == True:
+      → if x:)
+    ────────────────────────────────────────
+    Tool: slotscheck
+    What it catches: Classes with slots that don't actually save memory
+    ────────────────────────────────────────
+    Tool: deptry
+    What it catches: Unused/missing dependencies in pyproject.toml
+    ────────────────────────────────────────
+    Tool: eradicate
+    What it catches: Commented-out code that rots silently
+
+    Analysis (building better tools):
+
+    Tool: tree-sitter
+    What it gives you: Incremental parser — build fast code search/nav without full
+      AST parse
+    ────────────────────────────────────────
+    Tool: ast-grep
+    What it gives you: Structural search/replace across codebases (like semgrep but
+      faster, YAML rules)
+    ────────────────────────────────────────
+    Tool: py-spy
+    What it gives you: Sampling profiler — see exactly where time goes in
+      production, no instrumentation
+
+    The one-two punch: uv + ruff format cut the dev loop in half. pyright catches type bugs mypy misses. Everything else is optimization on top.
+
+  Outside audit-test's lane (which is pre-commit/pre-release gate). The gaps are:
+
+    Gap: Runtime guard
+    What you'd build: A process that watches production and kills runaway
+      subprocesses, logs when secrets hit stdout, alerts on unbounded memory.
+      audit-test says "this code SHOULDN'T hang" — the guard says "it IS hanging
+      right now, kill it"
+    Why it matters: Your runtime audit finds the patterns in code. A companion
+      enforces them live
+    ────────────────────────────────────────
+    Gap: Dependency updater
+    What you'd build: audit-upgrade — runs pip list --outdated, bumps each dep,
+      runs audit-test after each bump, rolls back on failure. Automated
+      green-keeping
+    Why it matters: Nobody updates deps until the CVE scanner yells. This fixes it
+      before the yell
+    ────────────────────────────────────────
+    Gap: Git history miner
+    What you'd build: audit-history — scans git log for commit messages matching
+      bug patterns ("fix", "crash", "race condition"), cross-references with the
+      files that changed most often, flags hotspot modules
+    Why it matters: Tells you where bugs cluster without reading every line. The
+      modules that get fixed most often are the ones you should audit hardest
+    ────────────────────────────────────────
+    Gap: API contract fuzzer
+    What you'd build: Takes your public function signatures, feeds them edge inputs
+      (None, 0, empty, max int, NaN, oversized strings), records which crash.
+      audit-test checks the call sites; the fuzzer checks the callees
+    Why it matters: audit-test + fuzzer = both ends of the contract covered
+    ────────────────────────────────────────
+    Gap: Onboarding runner
+    What you'd build: Clones a fresh checkout, runs audit-test full, then pip
+      install -e ., then pytest. Fails if any step doesn't work on a blank machine.
+      Solves the "works on my machine" silent failure
+    Why it matters: First thing a new contributor does is pip install -e . &&
+      audit-test. If it fails, they leave
+
+ Write → Lookup → Test → Ship → Monitor → Maintain
+
+    You have Lookup (DLL) and Test (audit-test). Missing:
+
+    Stage: Migration
+    Tool: Tool that rewrites code across breaking changes. Feed it "requests →
+      httpx" or "setup.py → pyproject.toml" with AST-level transforms, runs
+      audit-test after each change.
+    What it does: Upgrades that pass the gate are safe. Upgrades that fail get
+      rolled back with a diff
+    ────────────────────────────────────────
+    Stage: Diff analyzer
+    Tool: Given a PR, runs audit-test on only the changed modules, shows what new
+      findings YOUR diff introduced specifically (not pre-existing debt). Like
+      audit-test gate but optimized for code review
+    What it does: Reviewer sees 3 new HIGHs on your 15-line change, not 52
+      pre-existing ones from the whole repo
+    ────────────────────────────────────────
+    Stage: Fleet health dashboard
+    Tool: Points audit-test at 50 repos. Tracks which modules, rules, and patterns
+      generate the most findings across ALL of them. Highlights when a team's
+      quality is trending down
+    What it does: Answers "are we getting better or worse" with numbers, not
+      feelings
+    ────────────────────────────────────────
+    Stage: Contract generator
+    Tool: Reads your type hints + docstrings + raises, generates a JSON contract
+      file per module. That contract is what audit-test's T5 (patch-target drift)
+      and R12 (prompt schema parity) already check against. But today you write
+      those contracts by hand
+    What it does: Auto-generate what you currently maintain manually
+    ────────────────────────────────────────
+    Stage: Scaffolder
+    Tool: audit-new my-tool creates a repo with pyproject.toml, src layout, tests/,
+      .audit-test-ignore, CI workflow — all pre-configured to pass audit-test full
+      out of the box. Zero-config green from commit 1
+    What it does: New projects start with the bar already met. No retrofitting
+
+    The diff analyzer and fleet dashboard have the most leverage — one makes code review dramatically faster, the other makes engineering decisions data-driven rather than gut-feel.

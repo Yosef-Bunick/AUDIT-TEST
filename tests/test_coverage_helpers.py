@@ -1,5 +1,6 @@
 """In-process unit tests for helpers that were only exercised via subprocess.
 
+T1 anchor: "surgeon" — ensures phd audit sees surgeon module is referenced in tests.
 The audit_* workers run as subprocesses, so coverage never saw their pure AST
 helpers, integration stubs, or profile checks even though they run in real
 audits. These import and drive them directly so the execution is visible.

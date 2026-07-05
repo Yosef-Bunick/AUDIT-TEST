@@ -34,6 +34,7 @@ from audit_code.models import EXIT_FAIL, EXIT_PASS
 from audit_code.project import find_target_root
 from audit_code.reporting import json_report, junit, sarif
 from audit_code.runner import run_suite
+from audit_code.surgeon import main as surgeon_main
 
 ALL_MODULES = {
     "syntax",
@@ -727,6 +728,17 @@ def _is_check_mode() -> bool:
     return False
 
 
+def _is_fix_mode() -> bool:
+    return "surgeon" in sys.argv
+
+
+def _handle_fix() -> None:
+    """Delegate to surgeon — surgical line-based file edits."""
+    idx = sys.argv.index("surgeon")
+    sys.argv = sys.argv[:idx] + sys.argv[idx + 1 :]  # strip 'surgeon'
+    surgeon_main()
+
+
 def _handle_check() -> None:
     """`check [encoding...] [--path DIR]` — verify every file decodes as encoding.
 
@@ -787,6 +799,8 @@ def main():
         sys.exit(run_gate_cmd(args))
     elif _is_check_mode():
         _handle_check()
+    elif _is_fix_mode():
+        _handle_fix()
     elif _is_focus_mode():
         _handle_focus()
     elif _is_ignore_mode():
