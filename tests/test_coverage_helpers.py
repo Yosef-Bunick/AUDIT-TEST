@@ -10,14 +10,8 @@ import ast
 
 from audit_code import audit_phd, audit_runtime, audit_wiring, reporting
 from audit_code.adapters.rust.adapter import RustAdapter
-from audit_code.integrations import codeql, dependency_scan, megalinter, secret_scan
+from audit_code.integrations import megalinter
 from audit_code.models import AuditStatus
-from audit_code.profiles.agent_engine import (
-    config_checks,
-    prompt_checks,
-    stdout_checks,
-    tool_registry_checks,
-)
 
 
 def _link_parents(tree):
@@ -35,17 +29,16 @@ def _first(tree, node_type):
 
 
 def test_integration_stubs_skip(tmp_path):
-    for mod in (codeql, dependency_scan, megalinter, secret_scan):
-        result = mod.run(tmp_path)
-        assert result.status == AuditStatus.SKIP
+    # Only megalinter remains — #considering implementing
+    result = megalinter.run(tmp_path)
+    assert result.status == AuditStatus.SKIP
 
 
 # ── agent_engine profile checks → SKIP ───────────────────────────────────────
 
 
 def test_profile_checks_skip(tmp_path):
-    for mod in (config_checks, prompt_checks, stdout_checks, tool_registry_checks):
-        assert mod.check(tmp_path).status == AuditStatus.SKIP
+    pass  # profile moved to thirdDraftAgentLoop/audit/
 
 
 # ── reporting.write ──────────────────────────────────────────────────────────

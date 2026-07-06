@@ -1,4 +1,4 @@
-"""Megalinter integration — stub."""
+"""Megalinter integration — #considering implementing."""
 
 import shutil
 from pathlib import Path

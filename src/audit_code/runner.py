@@ -15,7 +15,16 @@ import tempfile
 import time
 from pathlib import Path
 
-from audit_code import encoding_check, phd, polyglot, quality, runtime, suite, wiring
+from audit_code import (
+    deps,
+    encoding_check,
+    phd,
+    polyglot,
+    quality,
+    runtime,
+    suite,
+    wiring,
+)
 from audit_code.adapters import discover
 from audit_code.adapters.base import run_tool, which
 from audit_code.audit_shared import force_utf8_streams
@@ -179,11 +188,13 @@ def run_suite(
             ("black", "black format"),
             ("semgrep", "semgrep security scan"),
             ("bandit", "bandit security scan"),
+            ("deps", "Dependency scanner"),
         ]
         fast_audits = [
             ("wiring", "Is it connected?"),
             ("phd", "Does it meet the bar?"),
             ("quality", "External gates (fast checks only)"),
+            ("deps", "Dependency scanner"),
         ]
 
         if modules is not None:
@@ -219,13 +230,13 @@ def run_suite(
             if cov_tmp is not None:
                 shutil.rmtree(cov_tmp, ignore_errors=True)
     elif modules is None or any(
-        m in modules for m in ("wiring", "phd", "runtime", "suite", "quality")
+        m in modules for m in ("wiring", "phd", "runtime", "suite", "quality", "deps")
     ):
         skip = AuditResult(
             audit_id="python-audits",
             status=AuditStatus.SKIP,
             stdout=(
-                "no Python detected — wiring/phd/runtime/suite/quality "
+                "no Python detected — wiring/phd/runtime/suite/quality/deps "
                 "audits skipped"
             ),
         )
@@ -335,6 +346,7 @@ def _run_one_module(
         "runtime": runtime,
         "suite": suite,
         "quality": quality,
+        "deps": deps,
     }
 
     # standalone tools
