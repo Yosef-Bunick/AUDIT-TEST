@@ -125,6 +125,18 @@ def _recognized(args: str) -> bool:
         "q",
         "l",
         "b",
+        # new
+        "d",
+        "deps",
+        "--deps",
+        "encoding",
+        "--encoding",
+        "tests",
+        "--tests",
+        "strict",
+        "--strict",
+        "report",
+        "--report-only",
         # combos
         "q v",
         "phd high",
@@ -157,3 +169,54 @@ def test_recognized(args: str):
 )
 def test_unrecognized(args: str):
     assert not _recognized(args), f"should NOT be recognized: {args}"
+
+
+# ── Auto-discover: every WORD_MAP entry must be recognized ───────────────────
+
+
+def _extract_word_map():
+    """Parse WORD_MAP dict from cli.py source — keeps test in sync with code."""
+    import re
+    src = (Path(__file__).resolve().parent.parent / "src" / "audit_code" / "cli.py").read_text()
+    in_block = False
+    entries = {}
+    for line in src.splitlines():
+        if "WORD_MAP = {" in line:
+            in_block = True
+            continue
+        if in_block and "}" in line:
+            break
+        if in_block:
+            m = re.match(r'\s*"(\S+)":\s*"--(\S+)"', line)
+            if m:
+                entries[m.group(1)] = m.group(2)
+    return entries
+
+
+def test_word_map_complete():
+    """Every WORD_MAP entry must be recognized by the parser."""
+    word_map = _extract_word_map()
+    assert word_map, "failed to parse WORD_MAP"
+    for bare, flag in sorted(word_map.items()):
+        assert _recognized(bare), f"WORD_MAP '{bare}' -> --{flag} not recognized"
+        assert _recognized(f"--{flag}"), f"dash flag --{flag} not recognized"
+
+
+def test_skip_shortcuts():
+    """Every _MODULE_SHORT entry must be a valid --skip target."""
+    import re
+    src = (Path(__file__).resolve().parent.parent / "src" / "audit_code" / "cli.py").read_text()
+    in_block = False
+    ok = 0
+    for line in src.splitlines():
+        if "_MODULE_SHORT = {" in line:
+            in_block = True
+            continue
+        if in_block and "}" in line:
+            break
+        if in_block:
+            m = re.match(r'\s*"(\S+)":\s*"(\S+)"', line)
+            if m:
+                assert _recognized(f"--skip {m.group(1)}"), f"--skip {m.group(1)} not recognized"
+                ok += 1
+    assert ok >= 8, f"expected >=8 _MODULE_SHORT entries, got {ok}"
