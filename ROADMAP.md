@@ -12,7 +12,7 @@
 
 ## `#needs fix` inventory
 
-Grep: `grep -rn "#needs fix" src/`
+Grep: `grep -rn "# needs fix" src/`
 
 Known technical debt items not yet addressed. Each is an acknowledged
 gap — the audit still reports it but won't suppress it like `# audit: ok`.
