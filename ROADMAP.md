@@ -1,111 +1,35 @@
-# Roadmap
+# ROADMAP
 
-## Done
+## PHD planned rules
 
-### CLI & UX
-- [x] `pip install audit-test` — three CLI aliases: `audit-test`, `audit-test`, `audit-code`
-- [x] Per-module flags: `--phd`, `--wiring`, `--runtime`, `--suite`, `--quality`, `--syntax`, `--python`, `--tests`, `--lint`, `--black`
-- [x] `--skip MODULES` — exclude specific modules (space/comma delimited)
-- [x] Severity: `-h/--high`, `-m/--medium`, `--info`, `--all` (mutually exclusive)
-- [x] Verbosity: `-v/--verbose` — full detail output
-- [x] Short flags: `-f/--fix`, `-F/--full`, `-p/--path`, `-s/--skip`, `-H/--help`
-- [x] Bare words: `audit-test phd high fix` (no dashes needed)
-- [x] `--fix` default: quality-only, fast mode (~1s), inline feedback (black/ruff counts)
-- [x] `audit-test gate` — severity + verbose flags, diffs-only, fail-closed
-- [x] `--min` mode includes PHD audit
+| Rule | What | Severity | Value |
+|------|------|----------|-------|
+| F6 — async without await | `async def` with no `await` inside | MEDIUM | catches broken async refactors |
+| C7 — rmtree without guard | `shutil.rmtree` without try/except | HIGH | crashes on missing dirs |
+| C9 — float == | `==` on floats | MEDIUM | classic floating-point bug |
+| F5 — lock ordering | two locks acquired in different order | HIGH | deadlock detector |
+| T7 — mock signature mismatch | mock target vs actual function signature | MEDIUM | tests testing the wrong thing |
 
-### Core
-- [x] `pyproject.toml` + `pip install -e .` + CLI entry points
-- [x] `runner.py` — orchestrates all modules, mode logic, severity plumbing
-- [x] `models.py` — `AuditResult`, `Finding`, `AuditStatus`, `Severity`, exit codes 0-4
-- [x] `project.py` — `find_target_root()` separates package root from target root
-- [x] `audit-code gate` — delegates to `audit_gate.py` via subprocess with severity/verbose
-- [x] Quality audit: black + ruff + mypy + CVE + coverage + docstring + hygiene + mutation
-- [x] Python adapter: standalone scripts callable standalone or via package wrappers
-- [x] `audit_shared.py` + `audit_config.py` — shared constants, `.audit-test-ignore` support
+## `#needs fix` inventory
 
-### Adapters (9 languages)
-- [x] Python, JS/TS, Java, Go, Rust, C#, C++, HTML/CSS, SQL
-- [x] All with real `syntax_check()` — native tool or honest SKIP
-- [x] `test_command()` for non-Python suites wired into runner
+Grep: `grep -rn "#needs fix" src/`
 
-### Profiles & Integrations
-- [x] `profiles/agent_engine/` — 4 stub checks, `--profile` flag wired
-- [x] 5 integration stubs: semgrep, megalinter, codeql, secret_scan, dependency_scan
-- [x] Reporting: JSON, SARIF, JUnit output
+Known technical debt items not yet addressed. Each is an acknowledged
+gap — the audit still reports it but won't suppress it like `# audit: ok`.
 
-### Tests
-- [x] `tests/test_cli.py` — CLI exit codes, flag parsing, report writing
-- [x] `tests/test_runner.py` — run_suite, adapter loading, result aggregation
-- [x] `tests/test_adapters.py` — language detection, syntax checks, test commands
-- [x] `tests/test_config.py` — config contract, toml loading
-- [x] `tests/test_reporting.py` — SARIF, JUnit output formats
-- [x] `tests/test_base.py` — run_tool, source walk, quality tool detection
-- [x] `tests/test_coverage.py` — coverage metrics
-- [x] 112 tests, 0 failures
+## Completed (0.3.x)
 
-### Cleanliness
-- [x] Self-audit: 0 HIGH, 0 MEDIUM, 0 INFO, 0 errors
-- [x] All mypy type errors fixed
-- [x] ruff F841 clean
-- [x] black formatting clean
-- [x] Q5 coverage: improved error messages (no false positives on parse failures)
-- [x] CC BY-NC-ND 4.0 license
-- [x] README — full flag reference, install instructions, gate docs
+| Version | What |
+|---------|------|
+| 0.3.8 | graph command (dependency tracer), D1b cross-name duplicate detection |
+| 0.3.7 | scan context scanner, deps module, CLI auto-discovery tests |
+| 0.3.6 | agent-engine profile moved to thirdDraftAgentLoop, dead stubs deleted |
+| 0.3.5 | scan command with +N/-N syntax + --json |
+| 0.3.4 | deps wiring, megalinter tagged #considering |
 
----
+## Future
 
-## Phase 1 — Package restructure
-
-- [ ] **Import directly** — stop running standalone audit scripts via subprocess, import their functions
-- [x] **Package named `audit-test`** — `pip install audit-test`, repo `AUDIT-TEST`
-- [x] **CLI entry points** — `audit-test`, `audit-test`, `audit-code` all wired in pyproject.toml
-
----
-
-## Phase 2 — Deeper lint integrations
-
-- [ ] JavaScript: ESLint/Prettier
-- [ ] Java: Checkstyle/PMD
-- [ ] Go: `go vet` / `golangci-lint`
-- [ ] Rust: `cargo clippy` / `rustfmt`
-- [ ] C#: `dotnet format`
-- [ ] C++: `clang-tidy` / `cppcheck`
-- [ ] HTML/CSS: HTMLHint/Stylelint
-
----
-
-## Phase 3 — Fill in profiles
-
-- [ ] Agent Engine profile: extract ABE-specific checks from standalone scripts
-- [ ] Config-key flow validation
-- [ ] Prompt contract validation
-- [ ] Tool registry parity checks
-
----
-
-## Phase 4 — Fill in integrations
-
-- [ ] Semgrep: JSON output parser + `Finding` conversion
-- [ ] MegaLinter: comprehensive lint orchestration
-- [ ] CodeQL: security query runner
-- [ ] Secret scan: truffleHog / gitleaks
-- [ ] Dependency scan: OWASP / Snyk
-
----
-
-## Phase 5 — Polish
-
-- [ ] Quality.py `run()` decomposition — last DG1 god function
-- [ ] `sys.setrecursionlimit(10000)` → iterative Tarjan SCC
-- [ ] Console reporter — extract from runner.py into `reporting/console.py`
-- [ ] Multi-language smoke test — mixed Python/JS project
-- [ ] Parallel audit execution
-- [ ] `tests/test_gate.py` — G0-G4 gate logic (offline/mocked)
-- [ ] `tests/fixtures/` — sample projects for integration testing
-
----
-
-## Known issues (`#needs fix`)
-
-All `#needs fix` annotations have been resolved — either fixed (broad excepts → specific types, `should_audit` focus-group wiring) or converted to `# audit: ok` where the audit was wrong (MAX_PER_FILE_CHECKS is an adapter-domain constant, not a config tuning knob). The remaining technical debt lives in [Phase 5](#phase-5--polish).
+- polyglot audit completion (Swift, Dart, Ruby, PHP, Zig, Lua, Elixir)
+- Megalinter integration (#considering)
+- HTML radial graph visualization (hub-spoke)
+- Runtime audit expansion (memory, GPU, disk watchdogs)
