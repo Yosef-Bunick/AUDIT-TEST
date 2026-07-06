@@ -424,6 +424,27 @@ def test_cli_port_command(tmp_path):
     assert "def area(r):" in dest.read_text(encoding="utf-8")
 
 
+# ── in-process dispatch coverage ─────────────────────────────────────────────
+# Subprocess tests above prove end-to-end behaviour, but coverage can't see into
+# a child process. Driving surgeon.main() through cli._handle_fix() in-process
+# proves both the `surgeon` CLI dispatch and the surgeon argparse body execute.
+
+
+def test_handle_fix_dispatches_to_surgeon_inprocess(monkeypatch, capsys, tmp_path):
+    from audit_code import cli
+
+    f = tmp_path / "edit.py"
+    f.write_text("line1\nline2\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["audit-test", "surgeon", "--no-format", "replace", str(f), "1", "NEW"],
+    )
+    cli._handle_fix()
+    assert f.read_text(encoding="utf-8") == "NEW\nline2\n"
+    assert "replaced" in capsys.readouterr().out
+
+
 # ── _force_utf8_output ────────────────────────────────────────────────────
 
 

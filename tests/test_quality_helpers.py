@@ -108,3 +108,14 @@ def test_q5_cache_disabled_by_env(tmp_path, monkeypatch):
     q._q5_cache_save(tmp_path, "k", data)
     monkeypatch.setenv("AUDIT_NO_Q5_CACHE", "1")
     assert q._q5_cache_load(tmp_path, "k") is None  # forced miss
+
+
+def test_q5_cache_dir_is_deterministic_and_per_root(tmp_path):
+    # Exercises the real _q5_cache_dir (other cache tests monkeypatch it out).
+    d1 = q._q5_cache_dir(tmp_path)
+    d2 = q._q5_cache_dir(tmp_path)
+    assert d1 == d2
+    assert "audit_q5_cache" in str(d1)
+    other = tmp_path / "sub"
+    other.mkdir()
+    assert q._q5_cache_dir(other) != d1
