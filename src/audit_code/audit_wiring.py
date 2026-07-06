@@ -892,6 +892,89 @@ def _maybe_write_dead_json(dead, test_only) -> None:
     Path(out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _module_dotted(path: Path) -> str:
+    """Importable dotted name of a .py file, via its __init__.py package chain."""
+    parts = [path.stem]
+    parent = path.parent
+    while (parent / "__init__.py").exists():
+        parts.append(parent.name)
+        parent = parent.parent
+    return ".".join(reversed(parts))
+
+
+def _collect_imports(trees):
+    """(dotted_module_names, leaf_names) imported anywhere in *trees*."""
+    dotted: set[str] = set()
+    leaves: set[str] = set()
+    for tree in trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    dotted.add(a.name)
+                    leaves.add(a.name.split(".")[0])
+                    leaves.add(a.name.split(".")[-1])
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    dotted.add(node.module)
+                    # `from ._tool_runner import X`: the module leaf keeps it alive.
+                    leaves.add(node.module.split(".")[-1])
+                for a in node.names:
+                    leaves.add(a.name)
+    return dotted, leaves
+
+
+def find_dead_modules(prod, prod_trees, test_trees):
+    """CHECK 10 — production modules with no PRODUCTION importer.
+
+    CHECK 1/2 resolve references by bare name globally, so an orphaned FILE whose
+    only export is a common name (the integration stubs, whose sole symbol is
+    `run`) sails straight through. This closes that gap at module granularity and
+    mirrors CHECK 2: a module imported only from tests is `test-only` (built +
+    tested, never wired); one imported nowhere is `dead`.
+
+    Conservative — never false-positives. A file is reported only when its
+    importable dotted name and its bare stem appear in no *production* import,
+    its stem is referenced by no name/attribute/string token in any *other*
+    production file (guards dynamic import / registries), and it is not a package
+    marker (__init__/__main__), an `if __name__ == "__main__"` script, or a test.
+    Returns ``[(path, label)]`` with label in {"dead", "test-only"}.
+    """
+    prod_dotted, prod_leaves = _collect_imports(prod_trees)
+    test_dotted, test_leaves = _collect_imports(test_trees)
+
+    # Dynamic-dispatch guard + entry-point guard: PRODUCTION code only, so a
+    # coverage manifest listing module names as strings can't mask a module.
+    mentioned: dict[str, set] = collections.defaultdict(set)
+    main_guard: set[Path] = set()
+    for p, tree in prod_trees.items():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                mentioned[node.id].add(p)
+            elif isinstance(node, ast.Attribute):
+                mentioned[node.attr].add(p)
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                mentioned[node.value].add(p)
+            elif isinstance(node, ast.If) and (
+                "__main__" in ast.dump(node.test) and "__name__" in ast.dump(node.test)
+            ):
+                main_guard.add(p)
+
+    out = []
+    for p in sorted(prod):
+        if p.stem in ("__init__", "__main__") or is_test(p) or p in main_guard:
+            continue
+        dotted = _module_dotted(p)
+        if dotted in prod_dotted or p.stem in prod_leaves:
+            continue  # a production module imports it → wired
+        if mentioned.get(p.stem, set()) - {p}:
+            continue  # referenced by name/string in production → dynamic dispatch
+        label = (
+            "test-only" if (dotted in test_dotted or p.stem in test_leaves) else "dead"
+        )
+        out.append((p, label))
+    return out
+
+
 def main():
     strict = "--strict" in sys.argv
     prod, test = collect_files()
@@ -905,6 +988,7 @@ def main():
         refs_prod[name] |= paths
 
     high_findings = 0
+    medium_findings = 0
 
     dead, test_only = classify_defs(defs, refs_prod, refs_test, set(prod))
     _maybe_write_dead_json(dead, test_only)
@@ -1037,7 +1121,25 @@ def main():
     if not stdout_findings:
         print(f"  none ({n_reach} agent-process modules verified clean)")
 
-    print(f"\n{'=' * 72}\nHIGH-confidence findings: {high_findings}")
+    print()
+    print("=" * 72)
+    print("CHECK 10 - DEAD / TEST-ONLY MODULES (no production importer)")
+    print("=" * 72)
+    # MEDIUM, not HIGH: the dead-vs-test-only label depends on whether tests are
+    # in scan scope (scanning just the package dir hides sibling tests/), so an
+    # unwired module WARNs — it should never silently pass — but does not FAIL a
+    # build on a scope artifact. `dead` = imported by nothing in scope;
+    # `test-only` = imported only by tests (built + tested, never wired).
+    dead_modules = find_dead_modules(prod, trees_prod, trees_test)
+    for p, label in dead_modules:
+        print(f"  [{label:9}] {_module_dotted(p):40} {p.relative_to(ROOT)}")
+        medium_findings += 1
+    if not dead_modules:
+        print("  none")
+
+    print(f"\n{'=' * 72}")
+    print(f"SUMMARY  HIGH: {high_findings}   MEDIUM: {medium_findings}   INFO: 0")
+    print(f"HIGH-confidence findings: {high_findings}")
     if strict and high_findings:
         sys.exit(1)
 
