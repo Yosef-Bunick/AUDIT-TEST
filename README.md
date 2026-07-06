@@ -270,6 +270,17 @@ audit-test surgeon replace-cross <src> <s>:<e> <dest> <s>:<e>  # overwrite dest 
 audit-test surgeon port <src> <dest> <function>                # move a function + its imports
 ```
 
+### Context scanner
+
+Quickly grab lines around a finding for context before fixing:
+
+```powershell
+audit-test scan file.py 42               # ±3 lines around line 42
+audit-test scan file.py 42 -c 5          # ±5 lines
+audit-test scan file.py 42 -b 5 -a 2     # 5 before, 2 after
+audit-test scan file.py 15:30            # exact range
+```
+
 `port` finds a function in `<src>` (a file or a project directory), copies it
 into `<dest>`, and brings along only the imports it actually references that
 `<dest>` is missing.
