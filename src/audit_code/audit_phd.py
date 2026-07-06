@@ -1057,6 +1057,7 @@ def main():
                 # Dump just the body, strip variable names for structure-only compare
                 body_dump = "".join(ast.dump(s) for s in st.body)
                 import re as _re
+
                 body_dump = _re.sub(r"id='[^']+'", "id='_'", body_dump)
                 body_dump = _re.sub(r"arg='[^']+'", "arg='_'", body_dump)
                 _body_hashes[body_dump].append((st.name, st.lineno, rel(p)))
@@ -1066,8 +1067,10 @@ def main():
             continue
         where = ", ".join(f"{f}:{ln}" for _, ln, f in sites)
         sink.add(
-            "D1", where, 0,
-            f"identical bodies, different names: {', '.join(sorted(names))}"
+            "D1",
+            where,
+            0,
+            f"identical bodies, different names: {', '.join(sorted(names))}",
         )
 
     # D2 - circular imports (module level)

@@ -12,6 +12,7 @@ from audit_code.models import AuditResult, AuditStatus
 def _parse_imports(filepath: Path) -> set[str]:
     """Extract local module names imported by a .py file."""
     import ast
+
     try:
         tree = ast.parse(filepath.read_text(encoding="utf-8"))
     except (SyntaxError, UnicodeDecodeError):
@@ -71,6 +72,7 @@ def _resolve_local(pkg_root: Path | None, name: str) -> str | None:
 def build_graph(target_root: Path) -> dict[str, set[str]]:
     """Build adjacency: {module_path: {imported_module_paths}}."""
     import os
+
     graph: dict[str, set[str]] = {}
     skip = {".venv", "venv", "__pycache__", ".git", "node_modules", "dist", "build"}
 
@@ -150,7 +152,11 @@ def format_tree(node: str, upstream: dict, downstream: dict, graph: dict) -> str
             key=lambda x: x[1],
         )
         for name, dist in up_nodes:
-            prefix = "    " * (dist - 1) + "┌── " if dist == 1 else "    " * (dist - 1) + "├── "
+            prefix = (
+                "    " * (dist - 1) + "┌── "
+                if dist == 1
+                else "    " * (dist - 1) + "├── "
+            )
             lines.append(f"{prefix}{name}  (calls this)")
 
     # Current node
@@ -163,7 +169,11 @@ def format_tree(node: str, upstream: dict, downstream: dict, graph: dict) -> str
             key=lambda x: x[1],
         )
         for name, dist in down_nodes:
-            prefix = "    " * (dist - 1) + "└── " if dist == 1 else "    " * (dist - 1) + "├── "
+            prefix = (
+                "    " * (dist - 1) + "└── "
+                if dist == 1
+                else "    " * (dist - 1) + "├── "
+            )
             lines.append(f"{prefix}{name}")
 
     return "\n".join(lines)
@@ -177,7 +187,6 @@ def run(
     json_out: bool = False,
 ) -> AuditResult:
     """Main entry point for audit-test graph command."""
-    import json
 
     graph = build_graph(target_root)
     if module:
@@ -211,6 +220,7 @@ def run(
 
     if json_out:
         import json as _json
+
         edges = []
         for src in {node} | set(upstream) | set(downstream):
             for tgt in graph.get(src, set()):
