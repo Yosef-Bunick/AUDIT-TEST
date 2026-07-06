@@ -762,6 +762,13 @@ def _is_scan_mode() -> bool:
     return False
 
 
+def _is_graph_mode() -> bool:
+    for a in sys.argv[1:]:
+        if not a.startswith("-"):
+            return a == "graph"
+    return False
+
+
 def _is_deadcode_mode() -> bool:
     for a in sys.argv[1:]:
         if not a.startswith("-"):
@@ -1101,6 +1108,49 @@ def _handle_scan() -> None:  # audit: ok (CLI entry point)
     sys.exit(EXIT_PASS)
 
 
+def _handle_graph() -> None:  # audit: ok (CLI entry point)
+    """`graph <file> [+N] [-N] [--json]` — trace import dependencies."""
+    idx = sys.argv.index("graph")
+    args = sys.argv[idx + 1 :]
+    if not args or args[0] in ("help", "-H", "--help"):
+        print(
+            "graph — trace import dependencies around a module\n\n"
+            "  graph cli.py                   ±2 steps (default)\n"
+            "  graph cli.py +5                5 downstream (what it imports)\n"
+            "  graph cli.py -3                3 upstream (what imports it)\n"
+            "  graph cli.py +5 -3             5 forward, 3 back\n"
+            "  graph cli.py +5 -3 --json      machine-readable for agents\n"
+        )
+        sys.exit(0)
+
+    if len(args) < 1:
+        print("graph: need <file>", file=sys.stderr)
+        sys.exit(2)
+
+    module = args[0]
+    forward = back = 2
+    json_out = False
+
+    for a in args[1:]:
+        if a == "--json":
+            json_out = True
+        elif a.startswith("+") and len(a) > 1 and a[1:].isdigit():
+            forward = int(a[1:])
+        elif a.startswith("-") and len(a) > 1 and a[1:].isdigit():
+            back = int(a[1:])
+
+    target = find_target_root(None)
+    from audit_code.graph import run as graph_run
+    from audit_code.models import AuditStatus
+
+    result = graph_run(target, module, forward=forward, back=back, json_out=json_out)
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr)
+    sys.exit(EXIT_PASS if result.status == AuditStatus.PASS else 2)
+
+
 def main():
     _force_utf8_output()
     if _is_gate_mode():
@@ -1119,6 +1169,8 @@ def main():
         _handle_deadcode()
     elif _is_scan_mode():
         _handle_scan()
+    elif _is_graph_mode():
+        _handle_graph()
     elif _is_fix_mode():
         _handle_fix()
     elif _is_focus_mode():
