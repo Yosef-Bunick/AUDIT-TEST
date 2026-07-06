@@ -1046,9 +1046,12 @@ def _handle_scan() -> None:  # audit: ok (CLI entry point)
     filepath = Path(args[0])
     line_spec = args[1]
     before = after = 0
+    json_out = False
 
     for a in args[2:]:
-        if a.startswith("+") and len(a) > 1 and a[1:].isdigit():
+        if a == "--json":
+            json_out = True
+        elif a.startswith("+") and len(a) > 1 and a[1:].isdigit():
             after = int(a[1:])
         elif a.startswith("-") and len(a) > 1 and a[1:].isdigit():
             before = int(a[1:])
@@ -1065,7 +1068,8 @@ def _handle_scan() -> None:  # audit: ok (CLI entry point)
 
     if ":" in line_spec:
         parts = line_spec.split(":")
-        start = int(parts[0]); end = int(parts[1])
+        start = int(parts[0])
+        end = int(parts[1])
     else:
         start = end = int(line_spec)
         start = max(1, start - before)
@@ -1076,10 +1080,22 @@ def _handle_scan() -> None:  # audit: ok (CLI entry point)
         sys.exit(2)
 
     target_ln = int(line_spec.split(":")[0])
-    width = len(str(end))
-    for ln in range(start, end + 1):
-        marker = "→" if ln == target_ln else " "
-        print(f"  {marker} {ln:{width}}│{lines[ln - 1]}")
+    if json_out:
+        import json
+        result = {
+            "file": str(filepath),
+            "target": target_ln,
+            "start": start,
+            "end": end,
+            "total": total,
+            "lines": {str(ln): lines[ln - 1] for ln in range(start, end + 1)},
+        }
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        width = len(str(end))
+        for ln in range(start, end + 1):
+            marker = "→" if ln == target_ln else " "
+            print(f"  {marker} {ln:{width}}│{lines[ln - 1]}")
 
     sys.exit(EXIT_PASS)
 
