@@ -755,6 +755,13 @@ def _is_compare_mode() -> bool:
     return False
 
 
+def _is_scan_mode() -> bool:
+    for a in sys.argv[1:]:
+        if not a.startswith("-"):
+            return a == "scan"
+    return False
+
+
 def _is_deadcode_mode() -> bool:
     for a in sys.argv[1:]:
         if not a.startswith("-"):
@@ -1017,6 +1024,72 @@ def _handle_deadcode() -> None:  # audit: ok (CLI entry point)
     sys.exit(EXIT_PASS)
 
 
+def _handle_scan() -> None:  # audit: ok (CLI entry point)
+    """`scan <file> <line|start:end> [-c N] [-b N] [-a N]` — show context around a line."""
+    idx = sys.argv.index("scan")
+    args = sys.argv[idx + 1 :]
+    if not args or args[0] in ("help", "-H", "--help"):
+        print(
+            "scan — show context around a line or range\n\n"
+            "  scan file.py 42               ±3 lines around line 42\n"
+            "  scan file.py 42 -c 5          ±5 lines\n"
+            "  scan file.py 42 -b 5 -a 2     5 before, 2 after\n"
+            "  scan file.py 15:30            exact range (no context)\n"
+        )
+        sys.exit(0)
+
+    if len(args) < 2:
+        print("scan: need <file> and <line|start:end>", file=sys.stderr)
+        sys.exit(2)
+
+    filepath = Path(args[0])
+    line_spec = args[1]
+    ctx = 3
+    before = after = 0
+
+    i = 2
+    while i < len(args):
+        if args[i] == "-c" and i + 1 < len(args):
+            ctx = int(args[i + 1]); before = after = 0; i += 2
+        elif args[i] == "-b" and i + 1 < len(args):
+            before = int(args[i + 1]); ctx = 0; i += 2
+        elif args[i] == "-a" and i + 1 < len(args):
+            after = int(args[i + 1]); i += 2
+        else:
+            i += 1
+
+    if not filepath.exists():
+        print(f"scan: file not found: {filepath}", file=sys.stderr)
+        sys.exit(2)
+
+    lines = filepath.read_text(encoding="utf-8").splitlines()
+    total = len(lines)
+
+    # Parse line spec
+    if ":" in line_spec:
+        parts = line_spec.split(":")
+        start = int(parts[0]); end = int(parts[1])
+    else:
+        start = end = int(line_spec)
+        if ctx:
+            before = after = ctx
+        start = max(1, start - before)
+        end = min(total, end + after)
+
+    if start < 1 or end > total or start > end:
+        print(f"scan: lines {start}-{end} out of range (1-{total})", file=sys.stderr)
+        sys.exit(2)
+
+    # Print with line numbers, arrow on target
+    target_ln = int(line_spec.split(":")[0])
+    width = len(str(end))
+    for ln in range(start, end + 1):
+        marker = "→" if ln == target_ln else " "
+        print(f"  {marker} {ln:{width}}│{lines[ln - 1]}")
+
+    sys.exit(EXIT_PASS)
+
+
 def main():
     _force_utf8_output()
     if _is_gate_mode():
@@ -1033,6 +1106,8 @@ def main():
         _handle_compare()
     elif _is_deadcode_mode():
         _handle_deadcode()
+    elif _is_scan_mode():
+        _handle_scan()
     elif _is_fix_mode():
         _handle_fix()
     elif _is_focus_mode():
