@@ -1082,6 +1082,7 @@ def _handle_scan() -> None:  # audit: ok (CLI entry point)
     target_ln = int(line_spec.split(":")[0])
     if json_out:
         import json
+
         result = {
             "file": str(filepath),
             "target": target_ln,
