@@ -1046,15 +1046,19 @@ def main():
         where = ", ".join(f"{rel(p)}:{st.lineno}" for p, st in sites)
         sink.add("D1", where, 0, f"{name}() defined {len(sites)}x ({tag})")
 
-    # D1b - cross-name duplicate bodies (different names, identical AST)
+    # D1b - cross-name duplicate bodies (different names, identical logic)
     _body_hashes: dict[str, list[tuple[str, int, str]]] = collections.defaultdict(list)
+
     for p, tree in trees.items():
         for st in tree.body:
             if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if st.name.startswith("__"):
                     continue
-                # Hash just the body (ignore name, decorators, args, returns)
+                # Dump just the body, strip variable names for structure-only compare
                 body_dump = "".join(ast.dump(s) for s in st.body)
+                import re as _re
+                body_dump = _re.sub(r"id='[^']+'", "id='_'", body_dump)
+                body_dump = _re.sub(r"arg='[^']+'", "arg='_'", body_dump)
                 _body_hashes[body_dump].append((st.name, st.lineno, rel(p)))
     for body_dump, sites in _body_hashes.items():
         names = {s[0] for s in sites}

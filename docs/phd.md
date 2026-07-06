@@ -135,15 +135,31 @@ path = os.environ["API_KEY"]      # F4: KeyError if env var unset
 ## Dimension 4 — Design quality / drift
 
 ### D1 — duplicate function implementations [MEDIUM]
-Two functions with the same name in different files, with identical AST bodies. Copy-paste drift: one gets fixed, the other rots. Names `main` and `run` are exempted (legitimate entry-point duplication).
+
+Two checks:
+
+**D1a — same name, identical bodies.** Two functions with the same name in different files, with identical AST bodies. Copy-paste drift: one gets fixed, the other rots. Names `main` and `run` are exempted.
 ```python
 # utils.py
-def compute(x):               # D1: identical body
+def compute(x):               # D1a: identical body
     return x * 2 + 1
 
 # helpers.py
-def compute(x):               # D1: identical body — shared code, not duplicated
+def compute(x):               # D1a: identical body — shared code, not duplicated
     return x * 2 + 1
+```
+
+**D1b — different names, identical logic.** Two functions with different names but the same body (variable names normalized). Catches copy-paste-with-rename.
+```python
+# a.py
+def foo(x):                   # D1b: same logic as bar()
+    result = x + 1
+    return result
+
+# b.py
+def bar(y):                   # D1b: same logic as foo()
+    output = y + 1
+    return output
 ```
 **Fix**: extract to a shared module and import from both places.
 

@@ -283,6 +283,18 @@ audit-test scan file.py 15:30            # exact range
 audit-test scan file.py 42 --json        # machine-readable output
 ```
 
+### Dependency graph
+
+Trace import relationships — same vybe as scan:
+
+```powershell
+audit-test graph cli.py              # ±2 steps (default)
+audit-test graph cli.py +5            # 5 downstream (what it imports)
+audit-test graph cli.py -3            # 3 upstream (what imports it)
+audit-test graph cli.py +5 -3         # 5 forward, 3 back
+audit-test graph cli.py +5 -3 --json  # machine-readable for agents
+```
+
 `port` finds a function in `<src>` (a file or a project directory), copies it
 into `<dest>`, and brings along only the imports it actually references that
 `<dest>` is missing.
