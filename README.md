@@ -280,6 +280,7 @@ audit-test scan file.py 42 +5            # 5 lines after
 audit-test scan file.py 42 -5            # 5 lines before
 audit-test scan file.py 42 +5 -2         # 5 after, 2 before
 audit-test scan file.py 15:30            # exact range
+audit-test scan file.py 42 --json        # machine-readable output
 ```
 
 `port` finds a function in `<src>` (a file or a project directory), copies it
