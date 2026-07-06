@@ -12,6 +12,7 @@ Q8 [INFO] mutation testing (opt-in)
 
 import argparse as _argparse
 import ast
+import hashlib
 import importlib.util
 import json
 import os
@@ -143,6 +144,66 @@ def _def_spans(path: Path) -> list[tuple[str, int, int, int]]:
 
     walk(tree)
     return out
+
+
+# ── Q5 coverage cache ─────────────────────────────────────────────────────────
+# Quality-only mode (e.g. `audit-test q v`) has no `suite` audit to share a
+# coverage run with, so Q5 would run the whole test suite again. Cache the
+# `.coverage` data keyed by a byte-fingerprint of every source + test file: a
+# hit means the code is identical, so the coverage result is provably the same
+# and a full rerun is skipped. Any edit changes the fingerprint and reruns.
+
+
+def _q5_cache_dir(root: Path) -> Path:
+    """Persistent, per-project directory for the Q5 coverage cache."""
+    key = hashlib.sha256(str(Path(root).resolve()).encode("utf-8")).hexdigest()[:16]
+    return Path(tempfile.gettempdir()) / "audit_q5_cache" / key
+
+
+def _q5_fingerprint(root: Path, tests_dir: Path, pytest_extra: str = "") -> str:
+    """Content hash of every source + test .py plus the pytest invocation."""
+    prod, tests = _py_files(root, tests_dir)
+    h = hashlib.sha256()
+    h.update(b"q5-cache-v1\0")
+    h.update(pytest_extra.encode("utf-8") + b"\0")
+    for p in sorted(prod + tests):
+        try:
+            h.update(str(p.relative_to(root)).encode("utf-8") + b"\0")
+            h.update(p.read_bytes())
+            h.update(b"\0")
+        except (OSError, ValueError):
+            continue
+    return h.hexdigest()
+
+
+def _q5_cache_load(root: Path, fingerprint: str) -> Path | None:
+    """Return the cached .coverage path if it matches *fingerprint*, else None."""
+    if os.environ.get("AUDIT_NO_Q5_CACHE"):
+        return None
+    cache = _q5_cache_dir(root)
+    key_file = cache / "key"
+    cov_file = cache / "cov.coverage"
+    try:
+        if (
+            key_file.exists()
+            and cov_file.exists()
+            and key_file.read_text(encoding="utf-8") == fingerprint
+        ):
+            return cov_file
+    except OSError:
+        return None
+    return None
+
+
+def _q5_cache_save(root: Path, fingerprint: str, data_file: Path) -> None:
+    """Persist *data_file* as the Q5 coverage cache for *fingerprint* (best-effort)."""
+    cache = _q5_cache_dir(root)
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(data_file, cache / "cov.coverage")
+        (cache / "key").write_text(fingerprint, encoding="utf-8")
+    except OSError:
+        pass
 
 
 def run(  # needs fix (god function 550+ lines — decompose into sub-audits)
@@ -468,6 +529,11 @@ def run(  # needs fix (god function 550+ lines — decompose into sub-audits)
         else:
             tmp = Path(tempfile.mkdtemp(prefix="audit_q5_"))
             json_file = tmp / "cov.json"
+            rc = 0
+            cache_hit = False
+            # Byte-fingerprint of all source + test files: identical bytes ⇒
+            # identical coverage, so a cached .coverage can stand in for a rerun.
+            cache_key = _q5_fingerprint(root, tests_dir, pytest_extra)
             if (
                 shared_cov is not None
                 and shared_cov.exists()
@@ -481,29 +547,46 @@ def run(  # needs fix (god function 550+ lines — decompose into sub-audits)
                     "  reusing the suite audit's coverage run (deduped — no second run)"
                 )
             else:
-                data_file = tmp / ".coverage"
-                env = dict(os.environ, COVERAGE_FILE=str(data_file))
-                stdout_lines.append(
-                    "  running suite under coverage (this is a full test run)..."
-                )
-                rc, out = _run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "coverage",
-                        "run",
-                        f"--source={root}",
-                        "-m",
-                        "pytest",
-                        str(tests_dir),
-                        "-q",
-                        "--tb=no",
-                        *pytest_extra.split(),
-                    ],
-                    root,
-                    timeout=1800,
-                    env=env,
-                )
+                cached = _q5_cache_load(root, cache_key)
+                if cached is not None:
+                    # Quality-only mode: no suite ran, but nothing changed since
+                    # the last coverage run, so reuse the cached .coverage.
+                    data_file = cached
+                    env = dict(os.environ, COVERAGE_FILE=str(data_file))
+                    cache_hit = True
+                    stdout_lines.append(
+                        "  reusing cached Q5 coverage (source unchanged since last "
+                        "run; set AUDIT_NO_Q5_CACHE=1 to force a rerun)"
+                    )
+                else:
+                    data_file = tmp / ".coverage"
+                    env = dict(os.environ, COVERAGE_FILE=str(data_file))
+                    stdout_lines.append(
+                        "  running suite under coverage (this is a full test run)..."
+                    )
+                    rc, out = _run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "coverage",
+                            "run",
+                            f"--source={root}",
+                            "-m",
+                            "pytest",
+                            str(tests_dir),
+                            "-q",
+                            "--tb=no",
+                            *pytest_extra.split(),
+                        ],
+                        root,
+                        timeout=1800,
+                        env=env,
+                    )
+            # Persist a freshly produced coverage file (from either the shared
+            # suite run or this mode's own run) so the next quality-only run is
+            # instant while the source is unchanged.
+            if not cache_hit and data_file.exists() and data_file.stat().st_size > 0:
+                _q5_cache_save(root, cache_key, data_file)
             if not data_file.exists():
                 reason = (
                     f"coverage run exit={rc}"

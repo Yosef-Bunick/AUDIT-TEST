@@ -272,6 +272,24 @@ audit-test surgeon port <src> <dest> <function>                # move a function
 into `<dest>`, and brings along only the imports it actually references that
 `<dest>` is missing.
 
+### Speed
+
+A full `audit-test` runs the test suite under coverage **once**: the `suite`
+audit produces the data and quality's Q5 (per-def execution proof) reuses it —
+no second run. Quality-only mode (`audit-test q v`) has no suite to share with,
+so Q5 **caches the coverage** keyed by a byte-fingerprint of every source and
+test file. Re-running `q` with unchanged code reuses that cache (≈20× faster);
+any edit busts the fingerprint and reruns. Force a fresh run with:
+
+```powershell
+$env:AUDIT_NO_Q5_CACHE = "1"    # PowerShell — disable the Q5 coverage cache
+```
+
+Other fast paths: `audit-test fast` skips the slow checks (Q3 mypy, Q5 coverage,
+mutation); `audit-test min` runs only wiring + phd + quality. Test parallelism
+(`pytest -n`) is **not** used — this suite is subprocess-bound, so extra workers
+run slower, not faster.
+
 ### Standalone scripts
 
 The original audit scripts also work standalone — no pip install needed.
@@ -459,3 +477,5 @@ License details: https://creativecommons.org/licenses/by-nc-nd/4.0/
 This license applies unless otherwise explicitly stated within specific files or directories of this repository.
 
 For permission to monetize, distribute modified versions, remix, sublicense, or commercially use this repository, please contact the creator directly.
+
+**AI Training Restriction.** No part of this work may be used as training data to train, fine-tune, or otherwise build machine learning models (including large language models, code generation models, or embeddings) without explicit written permission. This restriction applies regardless of whether the output is distributed or kept private. Using this tool to evaluate or benchmark model output is permitted.
