@@ -117,3 +117,65 @@ def test_rel_outside_root(monkeypatch, tmp_path):
     result = aw._rel(f)
     assert "\\" not in result  # POSIX separators
     assert result.endswith("file.py")
+
+
+# ── CHECK 10: dead / test-only modules ──
+
+
+def _parse(tmp_path, files):
+    trees = {}
+    for rel, src in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(src, encoding="utf-8")
+        trees[p] = ast.parse(src)
+    return trees
+
+
+def test_find_dead_modules_labels(monkeypatch, tmp_path):
+    monkeypatch.setattr(aw, "ROOT", tmp_path)
+    prod = _parse(
+        tmp_path,
+        {
+            "app.py": "from mymod import thing\nthing()\n\n"
+            "if __name__ == '__main__':\n    thing()\n",
+            "mymod.py": "def thing():\n    return 1\n",
+            "orphan.py": "def go():\n    return 1\n",
+            "helper.py": "def h():\n    return 1\n",
+        },
+    )
+    test = _parse(tmp_path, {"test_helper.py": "from helper import h\n"})
+    res = {p.name: lb for p, lb in aw.find_dead_modules(list(prod), prod, test)}
+    assert "mymod.py" not in res  # imported by production → wired
+    assert "app.py" not in res  # __main__ entry point
+    assert res["orphan.py"] == "dead"  # imported by nothing
+    assert res["helper.py"] == "test-only"  # imported only by tests
+
+
+def test_find_dead_modules_dynamic_mention_alive(monkeypatch, tmp_path):
+    monkeypatch.setattr(aw, "ROOT", tmp_path)
+    prod = _parse(
+        tmp_path,
+        {
+            "loader.py": "import importlib\nimportlib.import_module('plugin')\n",
+            "plugin.py": "def go():\n    return 1\n",
+        },
+    )
+    res = {p.name for p, _ in aw.find_dead_modules(list(prod), prod, {})}
+    assert "plugin.py" not in res  # name appears as a string in prod → alive
+
+
+def test_find_dead_modules_relative_import_alive(monkeypatch, tmp_path):
+    monkeypatch.setattr(aw, "ROOT", tmp_path)
+    prod = _parse(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def u():\n    return 1\n",
+            "pkg/user.py": "from .util import u\n\nu()\n\n"
+            "if __name__ == '__main__':\n    u()\n",
+        },
+    )
+    res = {p.name for p, _ in aw.find_dead_modules(list(prod), prod, {})}
+    assert "util.py" not in res  # relative import keeps it alive
+    assert "__init__.py" not in res  # package markers never flagged
