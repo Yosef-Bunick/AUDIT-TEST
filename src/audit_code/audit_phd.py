@@ -1046,6 +1046,26 @@ def main():
         where = ", ".join(f"{rel(p)}:{st.lineno}" for p, st in sites)
         sink.add("D1", where, 0, f"{name}() defined {len(sites)}x ({tag})")
 
+    # D1b - cross-name duplicate bodies (different names, identical AST)
+    _body_hashes: dict[str, list[tuple[str, int, str]]] = collections.defaultdict(list)
+    for p, tree in trees.items():
+        for st in tree.body:
+            if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if st.name.startswith("__"):
+                    continue
+                # Hash just the body (ignore name, decorators, args, returns)
+                body_dump = "".join(ast.dump(s) for s in st.body)
+                _body_hashes[body_dump].append((st.name, st.lineno, rel(p)))
+    for body_dump, sites in _body_hashes.items():
+        names = {s[0] for s in sites}
+        if len(names) < 2:
+            continue
+        where = ", ".join(f"{f}:{ln}" for _, ln, f in sites)
+        sink.add(
+            "D1", where, 0,
+            f"identical bodies, different names: {', '.join(sorted(names))}"
+        )
+
     # D2 - circular imports (module level)
     def modname(p):
         parts = list(p.relative_to(ROOT).parts)
