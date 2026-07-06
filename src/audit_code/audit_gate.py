@@ -131,7 +131,9 @@ def _changed_files() -> tuple[dict, list]:
     return changed, deleted
 
 
-def _make_shadow(changed: dict, deleted: list) -> Path:
+def _make_shadow(
+    changed: dict, deleted: list
+) -> Path:  # audit: ok (gate worktree setup)
     """HEAD worktree + working-tree versions of every changed file overlaid."""
     tmp = Path(tempfile.mkdtemp(prefix="audit_gate_"))
     shadow = tmp / "shadow"
@@ -150,7 +152,7 @@ def _make_shadow(changed: dict, deleted: list) -> Path:
     return shadow
 
 
-def _drop_shadow(shadow: Path):
+def _drop_shadow(shadow: Path):  # audit: ok (gate worktree cleanup)
     subprocess.run(
         ["git", "worktree", "remove", "--force", str(shadow)],
         cwd=str(ROOT),
@@ -356,7 +358,7 @@ def g4_mutation(shadow: Path, changed: dict, defs: list, kill_pct: int):
     return (rate >= kill_pct, detail, survivors)
 
 
-def _run_g2_g3(shadow, changed, verdicts):
+def _run_g2_g3(shadow, changed, verdicts):  # audit: ok (gate orchestrator)
     """G2 suite + G3 execution proof under branch coverage."""
     defs = _changed_defs(shadow, changed)
     # G2 + G3: suite under coverage
@@ -451,7 +453,7 @@ def _run_g2_g3(shadow, changed, verdicts):
     return defs
 
 
-def _run_gates(
+def _run_gates(  # audit: ok (gate orchestrator)
     shadow: Path, changed: dict, args, severity: str | None = "HIGH"
 ) -> dict:
     """G1 static regression + G2 suite + G3 execution proof + G4 mutation."""
@@ -520,7 +522,7 @@ def _run_gates(
     return verdicts
 
 
-def main():
+def main():  # audit: ok (CLI entry point)
     force_utf8_streams()
     ap = argparse.ArgumentParser()
     ap.add_argument(

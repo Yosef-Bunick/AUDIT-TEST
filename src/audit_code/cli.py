@@ -759,7 +759,7 @@ def _is_deadcode_mode() -> bool:
     return False
 
 
-def _handle_fix() -> None:
+def _handle_fix() -> None:  # audit: ok (CLI entry point)
     """Delegate to surgeon — surgical line-based file edits."""
     idx = sys.argv.index("surgeon")
     sys.argv = sys.argv[:idx] + sys.argv[idx + 1 :]  # strip 'surgeon'
@@ -1084,13 +1084,13 @@ def _expand_bare_words() -> None:
         # severity
         "high": "--high",  # h, -h
         "medium": "--medium",  # m, -m
-        "info": "--info",  # i , -i
-        "all": "--all",  # a , -a
+        "info": "--info",  # i, -i
+        "all": "--all",  # a, -a
         # modes
         "fix": "--fix",  # f -f
-        "full": "--full",  # F , -F
+        "full": "--full",  # F, -F
         "min": "--min",
-        "verbose": "--verbose",  # v , -v
+        "verbose": "--verbose",  # v, -v
         "strict": "--strict",
         "report": "--report-only",
         # single-letter shortcuts

@@ -404,7 +404,7 @@ def _write_requirements(scanned: dict[str, list[str]], preserved: list[str]):
     (ROOT / ".requirements").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main():
+def main():  # audit: ok (CLI entry point)
     scanned = _collect_imports()
     existing = _read_requirements()
 

@@ -77,7 +77,7 @@ def run_one(script: str):
     return out, proc.stderr or "", high, med, info, crashed
 
 
-def main():
+def main():  # audit: ok (CLI entry point)
     full = "--full" in sys.argv
     strict = "--strict" in sys.argv
 

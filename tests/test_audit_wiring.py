@@ -98,3 +98,22 @@ def test_main_reports_dead_symbol(monkeypatch, tmp_path, capsys):
     assert "CHECK 1" in out
     assert "truly_dead" in out
     assert "HIGH-confidence findings" in out
+
+
+def test_rel_relative_path(monkeypatch, tmp_path):
+    """_rel() returns a POSIX path relative to ROOT."""
+    monkeypatch.setattr(aw, "ROOT", tmp_path)
+    f = tmp_path / "sub" / "file.py"
+    f.parent.mkdir()
+    f.write_text("x = 1", encoding="utf-8")
+    assert aw._rel(f) == "sub/file.py"
+
+
+def test_rel_outside_root(monkeypatch, tmp_path):
+    """_rel() falls back to absolute POSIX path when outside ROOT."""
+    monkeypatch.setattr(aw, "ROOT", tmp_path / "nope")
+    f = tmp_path / "file.py"
+    f.write_text("x = 1", encoding="utf-8")
+    result = aw._rel(f)
+    assert "\\" not in result  # POSIX separators
+    assert result.endswith("file.py")

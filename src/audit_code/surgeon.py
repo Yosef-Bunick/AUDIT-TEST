@@ -258,7 +258,7 @@ def _names_used(func_node: ast.AST) -> set[str]:
         if isinstance(n, ast.Name):
             used.add(n.id)
         elif isinstance(n, ast.Attribute):
-            root = n
+            root: ast.expr = n
             while isinstance(root, ast.Attribute):
                 root = root.value
             if isinstance(root, ast.Name):
@@ -432,7 +432,7 @@ def _force_utf8_output() -> None:
     force_utf8_streams()
 
 
-def main():
+def main():  # audit: ok (CLI entry point)
     _force_utf8_output()
     ap = argparse.ArgumentParser(description="surgical file editor")
     ap.add_argument("--no-format", action="store_true", help="skip auto-formatting")

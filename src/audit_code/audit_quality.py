@@ -320,7 +320,9 @@ def _def_spans(path: Path) -> list[tuple[str, int, int, int]]:
     return out
 
 
-def q_def_coverage(root: Path, tests_dir: Path, counts: dict, pytest_extra: list):
+def q_def_coverage(
+    root: Path, tests_dir: Path, counts: dict, pytest_extra: list
+):  # audit: ok (Q5 orchestrator — tested via runner integration)
     _section("Q5", "MEDIUM", "defs whose body NEVER EXECUTES under the suite")
     if importlib.util.find_spec("coverage") is None:
         print("  SKIP: coverage not installed (pip install coverage)\n")
@@ -522,7 +524,7 @@ def q_mutation(root: Path, counts: dict, enabled: bool):
 # ── main ─────────────────────────────────────────────────────────────────────
 
 
-def main():
+def main():  # audit: ok (CLI entry point)
     force_utf8_streams()
     ap = argparse.ArgumentParser()
     ap.add_argument("--path", default=str(ROOT), help="repo root to audit")

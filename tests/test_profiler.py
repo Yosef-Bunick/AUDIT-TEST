@@ -216,6 +216,30 @@ def test_normalize_skip_forms():
     assert profiler._normalize_skip(["a", "", "b"]) == {"a", "b"}
 
 
+# ── size_values (ProfileConfig method) ────────────────────────────────────────
+
+
+def test_size_values_extracts_dimension_constants():
+    cfg = profiler.ProfileConfig()
+    text = "SIZE = 512\nWIDTH = 1920\nHEIGHT = 1080\nRESOLUTION = 256\nDIM = 128"
+    assert cfg.size_values(text) == [512, 1920, 1080, 256, 128]
+
+
+def test_size_values_returns_empty_when_no_marker():
+    cfg = profiler.ProfileConfig()
+    assert cfg.size_values("x = 42\ny = 99") == []
+
+
+def test_size_values_handles_custom_marker():
+    cfg = profiler.ProfileConfig({"size_marker": r"BUFFER\s*=\s*(\d+)"})
+    assert cfg.size_values("BUFFER = 2048") == [2048]
+
+
+def test_size_values_disabled_when_marker_is_empty():
+    cfg = profiler.ProfileConfig({"size_marker": ""})
+    assert cfg.size_values("SIZE = 999") == []
+
+
 # ── audit-HIGH integration (Tool 1) ──────────────────────────────────────────
 
 

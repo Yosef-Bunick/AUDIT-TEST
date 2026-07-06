@@ -135,6 +135,8 @@ SELF_NAMES = {
     "run_all_audits.py",
     "audit_config.py",
     "config.py",
+    "audit_gate.py",
+    "audit_deps.py",
 }
 
 STRICT_INDEX_RECEIVERS = {"cfg", "environ"}

@@ -422,3 +422,57 @@ def test_cli_port_command(tmp_path):
     )
     assert r.returncode == 0
     assert "def area(r):" in dest.read_text(encoding="utf-8")
+
+
+# ── _force_utf8_output ────────────────────────────────────────────────────
+
+
+def test_force_utf8_output_calls_delegate(monkeypatch):
+    """_force_utf8_output delegates to force_utf8_streams."""
+    called = []
+    monkeypatch.setattr(
+        "audit_code.audit_shared.force_utf8_streams", lambda: called.append(1)
+    )
+    surgeon._force_utf8_output()
+    assert called == [1]
+
+
+# ── _run_formatter ────────────────────────────────────────────────────────
+
+
+def test_run_formatter_success(monkeypatch, tmp_path):
+    """_run_formatter returns True when black/ruff succeed."""
+    import subprocess
+
+    def fake_run(cmd, capture_output, text, timeout):
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr("audit_code.surgeon.subprocess.run", fake_run)
+    f = tmp_path / "x.py"
+    f.write_text("x=1", encoding="utf-8")
+    assert surgeon._run_formatter(f) is True
+
+
+def test_run_formatter_tool_missing(monkeypatch, tmp_path):
+    """_run_formatter returns False when tools are not installed."""
+
+    def fake_run(cmd, capture_output, text, timeout):
+        raise FileNotFoundError
+
+    monkeypatch.setattr("audit_code.surgeon.subprocess.run", fake_run)
+    f = tmp_path / "x.py"
+    f.write_text("x=1", encoding="utf-8")
+    assert surgeon._run_formatter(f) is False
+
+
+def test_run_formatter_timeout(monkeypatch, tmp_path):
+    """_run_formatter returns False on subprocess timeout."""
+    import subprocess
+
+    def fake_run(cmd, capture_output, text, timeout):
+        raise subprocess.TimeoutExpired(cmd=["black"], timeout=30)
+
+    monkeypatch.setattr("audit_code.surgeon.subprocess.run", fake_run)
+    f = tmp_path / "x.py"
+    f.write_text("x=1", encoding="utf-8")
+    assert surgeon._run_formatter(f) is False
