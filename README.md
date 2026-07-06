@@ -319,28 +319,73 @@ python run_all_audits.py       # orchestrate all five into one report
 | encoding | **Is the source the right encoding?** Strict-decodes every text file (UTF-8 by default; configurable) | `#encoding` + `check` |
 | integrations | **External tools.** semgrep, bandit, +14 native linters across 9 languages | [docs/integrations.md](docs/integrations.md) |
 
+> **wiring, phd and runtime aren't Python-only.** Python gets the full
+> `ast`-based rules; every other language gets a **portable, dependency-free
+> subset** (dead symbols, swallowed errors, dynamic `eval`, hardcoded secrets,
+> debt markers, unbounded loops) — see [Polyglot audits](#polyglot-audits).
+
 ## Languages
 
 Auto-detects 9 languages (marker files or source files anywhere in the tree,
 root included). Python runs the full five-audit stack. Every other language
-gets a **real** syntax check plus its native test suite — and when the
-required toolchain is missing, the result is an honest `SKIP` with the
-install hint, never a fake pass:
+gets a **real** syntax check, its native test suite, **and a portable
+wiring/phd/runtime pass** — and when a required toolchain is missing, the
+result is an honest `SKIP` with the install hint, never a fake pass:
 
-| Language | Detection | Syntax check | Test suite |
-|---|---|---|---|
-| Python | `pyproject.toml`, `setup.py`, `*.py` | `ast.parse` per file (built-in) | pytest (via `suite` audit) |
-| JS / TS | `package.json`, `*.js`, `*.ts` | `node --check`; TS via `tsc --noEmit` (TS1xxx only) | `npm test` (real script only) |
-| Java | `pom.xml`, `build.gradle`, `*.java` | `javac -proc:none` (parse errors only; classpath noise not judged) | `mvn test` / `gradlew test` |
-| Go | `go.mod`, `*.go` | `gofmt -l -e` (parse + format drift) | `go test ./...` |
-| Rust | `Cargo.toml`, `*.rs` | `cargo check` | `cargo test` |
-| C# | `*.cs` | `dotnet build` (SKIP if restore fails) | `dotnet test` |
-| C / C++ | `CMakeLists.txt`, `Makefile`, `*.c(pp)` | `gcc/clang -fsyntax-only` or `cl /Zs` per unit | `ctest` (if `build/` exists) |
-| HTML / CSS | `*.html`, `*.css`, `*.scss` | tag-balance / brace-balance (structural, stdlib) | — |
-| SQL | `*.sql` | `sqlfluff parse` (ANSI; SKIP if not installed) | — |
+| Language | Detection | Syntax check | Test suite | Semantic¹ |
+|---|---|---|---|---|
+| Python | `pyproject.toml`, `setup.py`, `*.py` | `ast.parse` per file (built-in) | pytest (via `suite` audit) | full `ast` |
+| JS / TS | `package.json`, `*.js`, `*.ts` | `node --check`; TS via `tsc --noEmit` (TS1xxx only) | `npm test` (real script only) | ✓ |
+| Java | `pom.xml`, `build.gradle`, `*.java` | `javac -proc:none` (parse errors only; classpath noise not judged) | `mvn test` / `gradlew test` | ✓ |
+| Go | `go.mod`, `*.go` | `gofmt -l -e` (parse + format drift) | `go test ./...` | ✓ |
+| Rust | `Cargo.toml`, `*.rs` | `cargo check` | `cargo test` | ✓ |
+| C# | `*.cs` | `dotnet build` (SKIP if restore fails) | `dotnet test` | ✓ |
+| C / C++ | `CMakeLists.txt`, `Makefile`, `*.c(pp)` | `gcc/clang -fsyntax-only` or `cl /Zs` per unit | `ctest` (if `build/` exists) | phd/runtime¹ |
+| HTML / CSS | `*.html`, `*.css`, `*.scss` | tag-balance / brace-balance (structural, stdlib) | — | — |
+| SQL | `*.sql` | `sqlfluff parse` (ANSI; SKIP if not installed) | — | — |
+
+¹ Portable wiring/phd/runtime via the [Polyglot audits](#polyglot-audits)
+engine. C/C++ gets phd + runtime but not wiring (linkage/headers make
+dead-symbol detection unreliable).
 
 Restrict detection with `[audit] languages = ["python", "go"]` in
 `audit-code.toml` (empty list = auto-detect all).
+
+### Polyglot audits
+
+The deep audits go multi-language without a parser per language. Python keeps
+its full `ast` rules; every other language gets a **dependency-free, portable
+subset** driven by a per-language `LangSpec` (file extensions, how a definition
+looks, which rules apply). Detection is by extension in a single tree walk, so a
+language needs **no toolchain and no adapter** — pure-Kotlin or pure-Elixir
+repos are scanned out of the box.
+
+**17 languages** carry rules today:
+
+| | Languages |
+|---|---|
+| Full adapter (syntax + tests + semantic) | JavaScript/TypeScript, Java, Go, Rust, C#, C/C++ |
+| Semantic-only (wiring/phd/runtime) | Kotlin, Swift, Dart, Ruby, PHP, Zig, Scala, Lua, Haskell, Elixir, SQL |
+
+What each portable audit looks for:
+
+- **wiring** — dead symbols: a definition (function/class/method) whose name is
+  never referenced anywhere else. Conservative — exported/`pub`/capitalised API
+  and entry points are never flagged, so it under-reports rather than cries wolf.
+  (Disabled for C/C++, Haskell and SQL, where linkage/exports make it unreliable.)
+- **phd** — swallowed errors (empty `catch`), catch-all handlers, dynamic code
+  execution (`eval`, `new Function`, `Code.eval`, `load`), hardcoded secrets,
+  Go `if err != nil {}`, Rust `.unwrap()`/`panic!`, Swift `try!`/`fatalError`,
+  Kotlin `!!`, unsafe C (`gets`/`strcpy`), Haskell `unsafePerformIO`, SQL
+  `DELETE`/`UPDATE` without a `WHERE`.
+- **runtime** — debug leftovers (`console.log`, `System.out.println`,
+  `var_dump`, `IO.inspect`), debt markers (TODO/FIXME/XXX/HACK), unbounded loops,
+  `SELECT *`.
+
+Findings surface per language as `javascript-wiring`, `go-phd`, `rust-runtime`,
+`kotlin-phd`, etc. A language with no rule set returns an honest `SKIP`. The
+`[audit] languages = [...]` allow-list and `--wiring`/`--phd`/`--runtime` module
+flags apply to these exactly as they do to the Python audits.
 
 ## Exit codes
 

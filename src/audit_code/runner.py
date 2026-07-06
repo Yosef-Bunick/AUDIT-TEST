@@ -15,7 +15,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from audit_code import encoding_check, phd, quality, runtime, suite, wiring
+from audit_code import encoding_check, phd, polyglot, quality, runtime, suite, wiring
 from audit_code.adapters import discover
 from audit_code.adapters.base import run_tool, which
 from audit_code.audit_shared import force_utf8_streams
@@ -68,9 +68,15 @@ def run_suite(
     ]
     if wanted and "auto" not in wanted:
         adapters = [a for a in adapters if a.language in wanted]
-    print(
-        "  languages: " + (", ".join(a.language for a in adapters) or "none detected")
-    )
+
+    # Portable semantic-audit languages (detected by extension, no adapter
+    # required). Filtered by the same [audit].languages allow-list.
+    poly_detected = polyglot.detect(target_root)
+    if wanted and "auto" not in wanted:
+        poly_detected = {k: v for k, v in poly_detected.items() if k in wanted}
+
+    all_langs = {a.language for a in adapters} | set(poly_detected)
+    print("  languages: " + (", ".join(sorted(all_langs)) or "none detected"))
 
     # 0. Universal source-encoding check (language-agnostic; honours the target's
     #    #encoding, default utf-8). Runs on default/full; skipped in `min` and
@@ -136,6 +142,27 @@ def run_suite(
                 desc,
                 lambda m=module_name: _run_one_module(
                     target_root, m, mode, fix, severity, fast
+                ),
+            )
+
+    # 2.6 Portable semantic audits (wiring / phd / runtime) for every detected
+    #     non-Python language, via the dependency-free polyglot engine. Detection
+    #     is by file extension (its own tree walk), so a language needs no full
+    #     adapter to be scanned. Same module gating as the Python deep audits
+    #     below; `min` drops runtime. The `[audit].languages` filter still applies.
+    for lang in sorted(poly_detected):
+        sem_files = poly_detected[lang]
+        for kind in ("wiring", "phd", "runtime"):
+            if modules is not None and kind not in modules:
+                continue
+            if modules is None and mode == "min" and kind == "runtime":
+                continue
+            _run_step(
+                results,
+                f"{lang}-{kind}",
+                f"{lang} {kind}",
+                lambda k=kind, lg=lang, fs=sem_files: polyglot.run(
+                    k, target_root, lg, fs
                 ),
             )
 
