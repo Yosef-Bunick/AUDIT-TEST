@@ -34,13 +34,6 @@ def test_integration_stubs_skip(tmp_path):
     assert result.status == AuditStatus.SKIP
 
 
-# ── agent_engine profile checks → SKIP ───────────────────────────────────────
-
-
-def test_profile_checks_skip(tmp_path):
-    pass  # profile moved to thirdDraftAgentLoop/audit/
-
-
 # ── reporting.write ──────────────────────────────────────────────────────────
 
 

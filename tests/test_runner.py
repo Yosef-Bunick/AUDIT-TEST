@@ -169,7 +169,6 @@ def test_force_utf8_output_makes_status_glyphs_printable(monkeypatch):
 def test_profiles_load_returns_none_for_unknown():
     from audit_code.profiles import load
 
-    assert load("agent-engine") is None  # moved to ABE project
     assert load("nope") is None
 
 
