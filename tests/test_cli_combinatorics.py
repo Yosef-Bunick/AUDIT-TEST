@@ -236,6 +236,7 @@ def test_skip_shortcuts():
 def test_severity_resolution():
     """_resolve_severity maps flags to correct severity strings."""
     from audit_code.cli import _resolve_severity
+
     parser = build_audit_parser()
 
     cases = [
@@ -248,7 +249,9 @@ def test_severity_resolution():
     for flag, expected in cases:
         argv = [flag] if flag else []
         args, _ = parser.parse_known_args(argv)
-        assert _resolve_severity(args) == expected, f"{flag or 'default'} -> {_resolve_severity(args)}"
+        assert (
+            _resolve_severity(args) == expected
+        ), f"{flag or 'default'} -> {_resolve_severity(args)}"
 
 
 def test_mutually_exclusive_severity():

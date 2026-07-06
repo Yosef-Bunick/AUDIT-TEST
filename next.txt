@@ -1,0 +1,118 @@
+============================================================
+DONE
+============================================================
+
+Tool 1: compare_projects       → audit-test compare
+Tool 2: benchmark_compilation   → audit-test profile (parse time, LOC)
+Tool 3: extract_features        → audit-test profile (products, pipeline)
+Tool 4: analyze_architecture    → audit-test profile (modularity, monolith)
+Tool 5: estimate_performance    → audit-test profile (compute_ops, speed)
+Tool 6: classify_dead_symbols   → audit-test deadcode
+Surgeon v2: cross-file          → audit-test surgeon copy/replace-cross/port
+Dependency scanner              → audit-test deps / d
+Context scanner                 → audit-test scan file.py 42 +5 -2
+Context JSON                    → audit-test scan file.py 42 --json
+CLI keyword auto-tests          → test_word_map_complete, test_skip_shortcuts
+Agent-engine profile            → moved to thirdDraftAgentLoop/audit/
+Dead stubs (codeql, etc.)       → deleted (megalinter tagged #considering)
+
+============================================================
+NEXT
+============================================================
+
+Graph — call-graph / dependency-graph tracer
+
+Same vybe as scan: +N forward, -N back from any module. Order doesn't matter
+(-5 +5 and +5 -5 are identical), just like scan.
+
+audit-test graph cli.py              ±2 default (2 forward, 2 back)
+audit-test graph cli.py +5           5 downstream (what cli.py calls)
+audit-test graph cli.py -3           3 upstream (what calls cli.py)
+audit-test graph cli.py +5 -3        5 forward, 3 back
+audit-test graph cli.py +5 -3 --json machine-readable for agents
+
+Output (human):
+
+                               ┌── wiring.py
+                               ├── phd.py
+          ┌── runner.py ───────┼── runtime.py
+          │                    ├── suite.py
+cli.py ───┤                    └── quality.py
+          ├── surgeon.py
+          └── profiler.py
+
+Output (JSON):
+
+{
+  "node": "cli.py",
+  "upstream": [],
+  "downstream": ["runner.py", "surgeon.py", "profiler.py"],
+  "edges": [
+    {"from": "cli.py", "to": "runner.py", "type": "import"},
+    {"from": "runner.py", "to": "wiring.py", "type": "import"},
+    {"from": "runner.py", "to": "phd.py", "type": "import"}
+  ]
+}
+
+Use cases:
+- "What breaks if I change audit_shared.py?" → graph audit_shared.py +5
+- "Who calls this dead function?" → graph wiring.py -3
+- Agent traces blast radius before making a change
+- Developer onboarding: see architecture at a glance
+
+Auto-follows imports and calls at module level. JSON for agents, tree-draw
+for humans.
+
+
+============================================================
+REFERENCE (original plan — all implemented)
+============================================================
+
+Three new tools your agents would call. Here's exactly how each works:
+
+    Tool 1: compare_projects(root, skip_dirs)
+
+    def compare_projects(root: Path, skip: list[str]) -> dict:
+        """Discover subdirs, run audit-test on each, return scores."""
+        ...
+
+    Tool 2: benchmark_compilation(project_path)
+
+    def benchmark_compilation(project: Path) -> dict:
+        """Time how fast this project compiles. Faster = lighter engine."""
+        ...
+
+    Tool 3: extract_features(project_path)
+
+    def extract_features(project: Path) -> dict:
+        """Find what this project actually DOES."""
+        ...
+
+    Tool 4: analyze_architecture(project_path)
+
+    def analyze_architecture(project: Path) -> dict:
+        """Extract function signatures and class structure."""
+        ...
+
+    Tool 5: estimate_performance(project_path)
+
+    def estimate_performance(project: Path) -> dict:
+        """Analyze code for performance characteristics without running it."""
+        ...
+
+    Tool 6: classify_dead_symbols(project_path, wiring_findings)
+
+    def classify_dead_symbols(project: Path, dead_symbols: list[dict]) -> dict:
+        """Categorize dead symbols by whether they hurt the product."""
+        ...
+
+    Surgeon v2: Cross-file copy/replace
+
+    def copy_lines(src, start, end, dest, after_line) -> str
+    def replace_lines_cross(src, start, end, dest, dest_start, dest_end) -> str
+    def port_feature(src_project, dest_project, function_name) -> dict
+
+    CLI syntax:
+      surgeon copy src.py 750:800 dest.py 527
+      surgeon replace src.py 750:800 dest.py 15:20
+      surgeon port 3.28/engine.py 233am/engine.py _gen_eyeshadow
