@@ -21,6 +21,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import sys
 from collections import namedtuple as _nt  # audit: ok (focus helpers)
@@ -31,6 +32,11 @@ from audit_code.audit_shared import force_utf8_streams, normalize_encoding
 from audit_code.config import load_project_config
 from audit_code.gate import run_gate as gate_main
 from audit_code.models import EXIT_FAIL, EXIT_PASS
+from audit_code.profiler import (
+    classify_dead_symbols,
+    compare_projects,
+    profile_project,
+)
 from audit_code.project import find_target_root
 from audit_code.reporting import json_report, junit, sarif
 from audit_code.runner import run_suite
@@ -732,6 +738,27 @@ def _is_fix_mode() -> bool:
     return "surgeon" in sys.argv
 
 
+def _is_profile_mode() -> bool:
+    for a in sys.argv[1:]:
+        if not a.startswith("-"):
+            return a == "profile"
+    return False
+
+
+def _is_compare_mode() -> bool:
+    for a in sys.argv[1:]:
+        if not a.startswith("-"):
+            return a == "compare"
+    return False
+
+
+def _is_deadcode_mode() -> bool:
+    for a in sys.argv[1:]:
+        if not a.startswith("-"):
+            return a == "deadcode"
+    return False
+
+
 def _handle_fix() -> None:
     """Delegate to surgeon — surgical line-based file edits."""
     idx = sys.argv.index("surgeon")
@@ -789,6 +816,204 @@ def _handle_check() -> None:
     sys.exit(EXIT_FAIL if result.is_failure else EXIT_PASS)
 
 
+# ── profile / compare commands ───────────────────────────────────────────────
+
+
+def _split_path_json(args: list[str]) -> tuple[str | None, str, list[str]]:
+    """Pull --path/-p, --json FILE, and path-like args out of *args*.
+
+    Returns (root, json_file, leftover) so each handler can add its own flags.
+    """
+    root: str | None = None
+    json_file = ""
+    leftover: list[str] = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--path", "-p"):
+            root = args[i + 1] if i + 1 < len(args) else None
+            i += 2
+            continue
+        if a == "--json":
+            json_file = args[i + 1] if i + 1 < len(args) else ""
+            i += 2
+            continue
+        if a.startswith(("/", "C:", "D:")):
+            root = a
+            i += 1
+            continue
+        leftover.append(a)
+        i += 1
+    return root, json_file, leftover
+
+
+def _emit(data: dict, json_file: str, summary: str) -> None:
+    """Write JSON to *json_file* if given, else print the human *summary*."""
+    if json_file:
+        Path(json_file).write_text(
+            json.dumps(data, indent=2, default=str), encoding="utf-8"
+        )
+        print(f"wrote {json_file}")
+    else:
+        print(summary)
+
+
+def _profile_summary(name: str, prof: dict) -> str:
+    s, a, p = prof["structure"], prof["architecture"], prof["performance"]
+    lines = [
+        f"{name}",
+        f"  files {s['file_count']}  loc {s['loc']}  "
+        f"funcs {s['function_count']} (pub {s['public_function_count']})  "
+        f"classes {s['class_count']}  loops {s['loop_count']}",
+        f"  parse {prof['metrics']['parse_seconds']}s  "
+        f"compute_ops {p['compute_ops']}  speed {p['estimated_speed']}  "
+        f"{'monolith' if a['is_monolith'] else 'modular'}",
+    ]
+    if a["pipeline_stages"]:
+        lines.append(f"  stages: {', '.join(a['pipeline_stages'])}")
+    for group, hits in prof["capabilities"].items():
+        if hits:
+            lines.append(f"  {group}: {', '.join(hits)}")
+    return "\n".join(lines)
+
+
+def _handle_profile() -> None:  # audit: ok (CLI entry point)
+    """`profile [--path DIR] [--json FILE]` — profile one project."""
+    idx = sys.argv.index("profile")
+    args = sys.argv[idx + 1 :]
+    if args and args[0] in ("help", "-H", "--help"):
+        print(
+            "profile — single-pass project profile (structure, cost, "
+            "capabilities)\n\n"
+            "  profile                 profile the current directory\n"
+            "  profile --path <dir>    profile another project\n"
+            "  profile --json <file>   write the full profile as JSON\n\n"
+            "Domain vocabulary is config-driven via [profile] in "
+            "audit-code.toml; with no config only generic signals are reported."
+        )
+        sys.exit(0)
+    root, json_file, _ = _split_path_json(args)
+    target = find_target_root(root)
+    cfg = load_project_config(target)
+    prof = profile_project(target, config=cfg)
+    _emit(prof, json_file, _profile_summary(target.name, prof))
+    sys.exit(EXIT_PASS)
+
+
+def _compare_table(results: dict[str, dict]) -> str:
+    """Render a compact comparison table across profiled projects.
+
+    Adds an ``AHIGH`` column (wiring+phd HIGH findings) when audit counts were
+    collected via ``compare --audit``.
+    """
+    has_audit = any("audit" in prof for prof in results.values())
+    audit_col = f" {'AHIGH':>6}" if has_audit else ""
+    header = (
+        f"{'project':<24} {'loc':>7} {'funcs':>6} {'cls':>4} "
+        f"{'loops':>6} {'parse':>7} {'ops':>5} {'speed':>7}{audit_col}  arch"
+    )
+    rows = [header, "-" * len(header)]
+    for name, prof in results.items():
+        s, a, p = prof["structure"], prof["architecture"], prof["performance"]
+        if has_audit:
+            total = prof.get("audit", {}).get("total_high", "-")
+            audit_cell = f" {total:>6}"
+        else:
+            audit_cell = ""
+        rows.append(
+            f"{name[:24]:<24} {s['loc']:>7} {s['function_count']:>6} "
+            f"{s['class_count']:>4} {s['loop_count']:>6} "
+            f"{prof['metrics']['parse_seconds']:>7} {p['compute_ops']:>5} "
+            f"{p['estimated_speed']:>7}{audit_cell}  "
+            f"{'monolith' if a['is_monolith'] else 'modular'}"
+        )
+    return "\n".join(rows)
+
+
+def _handle_compare() -> None:  # audit: ok (CLI entry point)
+    """`compare [--path ROOT] [--skip a,b] [--json FILE]` — profile subdirs."""
+    idx = sys.argv.index("compare")
+    args = sys.argv[idx + 1 :]
+    if args and args[0] in ("help", "-H", "--help"):
+        print(
+            "compare — profile every subproject under a root for ranking\n\n"
+            "  compare                 compare subdirs of the current directory\n"
+            "  compare --path <root>   compare subdirs of another root\n"
+            "  compare --skip a,b      ignore named subdirs\n"
+            "  compare --audit         also run wiring+phd HIGH counts (slow)\n"
+            "  compare --json <file>   write all profiles as JSON"
+        )
+        sys.exit(0)
+    skip = ""
+    include_audit = False
+    filtered: list[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--skip":
+            skip = args[i + 1] if i + 1 < len(args) else ""
+            i += 2
+            continue
+        if args[i] == "--audit":
+            include_audit = True
+            i += 1
+            continue
+        filtered.append(args[i])
+        i += 1
+    root, json_file, _ = _split_path_json(filtered)
+    target = find_target_root(root)
+    cfg = load_project_config(target)
+    results = compare_projects(target, skip, config=cfg, include_audit=include_audit)
+    if not results:
+        print(f"no subprojects found under {target}")
+        sys.exit(EXIT_PASS)
+    _emit(results, json_file, _compare_table(results))
+    sys.exit(EXIT_PASS)
+
+
+def _deadcode_summary(result: dict) -> str:
+    """Human summary of classified dead symbols, critical bucket first."""
+    lines = [f"dead code: {result['summary']}"]
+    labels = [
+        ("critical", "CRITICAL (missing features)"),
+        ("utility", "utility (likely harmless)"),
+        ("other", "other (verify manually)"),
+    ]
+    for key, label in labels:
+        items = result.get(key, [])
+        if not items:
+            continue
+        lines.append(f"  {label}:")
+        for it in items:
+            loc = f"{it.get('file')}:{it.get('line')}"
+            lines.append(f"    {it['name']:32} {loc}")
+    return "\n".join(lines)
+
+
+def _handle_deadcode() -> None:  # audit: ok (CLI entry point)
+    """`deadcode [--path DIR] [--json FILE]` — classify wiring's dead symbols."""
+    idx = sys.argv.index("deadcode")
+    args = sys.argv[idx + 1 :]
+    if args and args[0] in ("help", "-H", "--help"):
+        print(
+            "deadcode — classify the wiring audit's dead symbols by impact\n\n"
+            "  deadcode                 classify dead symbols in the cwd\n"
+            "  deadcode --path <dir>    classify another project\n"
+            "  deadcode --json <file>   write the classification as JSON\n\n"
+            "Critical vs utility buckets are config-driven via [profile] "
+            "pipeline_verbs / utility_markers in audit-code.toml."
+        )
+        sys.exit(0)
+    root, json_file, _ = _split_path_json(args)
+    target = find_target_root(root)
+    cfg = load_project_config(target)
+    from audit_code.wiring import collect_dead_symbols
+
+    dead = collect_dead_symbols(target)
+    result = classify_dead_symbols(target, dead, config=cfg)
+    _emit(result, json_file, _deadcode_summary(result))
+    sys.exit(EXIT_PASS)
+
+
 def main():
     _force_utf8_output()
     if _is_gate_mode():
@@ -799,6 +1024,12 @@ def main():
         sys.exit(run_gate_cmd(args))
     elif _is_check_mode():
         _handle_check()
+    elif _is_profile_mode():
+        _handle_profile()
+    elif _is_compare_mode():
+        _handle_compare()
+    elif _is_deadcode_mode():
+        _handle_deadcode()
     elif _is_fix_mode():
         _handle_fix()
     elif _is_focus_mode():

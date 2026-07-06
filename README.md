@@ -206,6 +206,72 @@ audit-test gate fast           # skip mutation (G4)
 audit-test gate -p <dir>      # gate a specific project
 ```
 
+### Project profiling
+
+Read and AST-parse every source file **once** to size up a project, or rank
+sibling projects side by side:
+
+```powershell
+audit-test profile                    # structure/cost/features of the cwd
+audit-test profile -p <dir>           # profile another project
+audit-test profile --json out.json    # full profile as JSON
+
+audit-test compare -p <root>          # rank every subproject under <root>
+audit-test compare -p <root> --audit  # add wiring+phd HIGH counts (slower)
+audit-test compare --skip a,b         # ignore named subdirs
+```
+
+`profile` reports structure (LOC, functions, classes, imports), parse cost,
+architecture (monolith vs modular + pipeline stages), runtime/performance
+signals, and — when configured — capability keyword buckets. `compare` lays
+that out as one row per subproject; `--audit` adds a HIGH-findings column.
+
+Domain vocabulary is **config-driven, never hardcoded**. With no config only
+generic, language-level signals are reported. To specialise, add a `[profile]`
+table to `audit-code.toml`:
+
+```toml
+[profile]
+pipeline_verbs  = ["render", "apply", "process"]
+heavy_libs      = ["numpy", "cv2", "torch"]
+utility_markers = ["lerp", "clamp"]
+capabilities    = { products = ["foo", "bar"] }
+```
+
+### Dead-symbol triage
+
+Wiring tells you a symbol is dead; `deadcode` tells you whether it matters —
+sorting each into **critical** (a pipeline/feature function that never runs),
+**utility** (a harmless helper), or **other** (verify manually):
+
+```powershell
+audit-test deadcode                   # classify dead symbols in the cwd
+audit-test deadcode -p <dir>          # another project
+audit-test deadcode --json out.json
+```
+
+Buckets are driven by the same `[profile] pipeline_verbs` / `utility_markers`
+config as profiling.
+
+### Surgeon — surgical & cross-file edits
+
+Precise, line-numbered edits for agent workflows — no text matching, no
+escaping fragility. Every edit auto-runs black + ruff (`--no-format` to skip):
+
+```powershell
+audit-test surgeon replace <file> <start>:<end> <content>      # overwrite lines
+audit-test surgeon insert <file> <line> <content>              # insert after line
+audit-test surgeon dry-run <file> <start>:<end> <content>      # preview without writing
+audit-test surgeon batch <fixes.json>                          # apply many fixes
+audit-test surgeon copy <src> <s>:<e> <dest> <after>           # copy lines across files
+audit-test surgeon replace-cross <src> <s>:<e> <dest> <s>:<e>  # overwrite dest range with src
+audit-test surgeon port <src> <dest> <function>                # move a function + its imports
+```
+
+`port` finds a function in `<src>` (a file or a project directory), copies it
+into `<dest>`, and brings along only the imports it actually references that
+`<dest>` is missing.
+
 ### Standalone scripts
 
 The original audit scripts also work standalone — no pip install needed.
@@ -213,6 +279,7 @@ Copy them into any project and run directly:
 
 ```powershell
 python audit_wiring.py         # dead symbols, config drift
+python audit_wiring.py --dead-json dead.json   # + structured dead-symbol export
 python audit_phd.py            # exception discipline, security patterns
 python audit_phd.py --min-severity=HIGH   # HIGH findings only
 python audit_runtime.py        # timeouts, log hygiene, prompt contracts

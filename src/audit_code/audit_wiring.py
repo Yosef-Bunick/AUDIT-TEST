@@ -845,6 +845,53 @@ def key_class(k):
     return "cosmetic"
 
 
+def _dead_json_path() -> str | None:
+    """Return the value of a ``--dead-json FILE`` argument, if present."""
+    for i, a in enumerate(sys.argv):
+        if a == "--dead-json" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return None
+
+
+def _rel(p: Path) -> str:
+    """Project-relative POSIX path for stable, cross-platform JSON."""
+    try:
+        return str(p.relative_to(ROOT)).replace("\\", "/")
+    except ValueError:
+        return str(p).replace("\\", "/")
+
+
+def _maybe_write_dead_json(dead, test_only) -> None:
+    """Write structured dead / test-only symbols to ``--dead-json FILE``.
+
+    Sites are 4-tuples ``(path, qualname, line, kind)``.  Written only when the
+    flag is passed, so normal (stdout-parsed) runs are unaffected.
+    """
+    out = _dead_json_path()
+    if not out:
+        return
+    payload = {
+        "dead": [
+            {
+                "name": name,
+                "file": _rel(p),
+                "line": line,
+                "kind": kind,
+                "qualname": qual,
+                "ambiguous": amb,
+            }
+            for name, sites, amb in dead
+            for (p, qual, line, kind) in sites
+        ],
+        "test_only": [
+            {"name": name, "file": _rel(p), "line": line, "kind": kind}
+            for name, sites, _tfiles, amb in test_only
+            for (p, qual, line, kind) in sites
+        ],
+    }
+    Path(out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def main():
     strict = "--strict" in sys.argv
     prod, test = collect_files()
@@ -860,6 +907,7 @@ def main():
     high_findings = 0
 
     dead, test_only = classify_defs(defs, refs_prod, refs_test, set(prod))
+    _maybe_write_dead_json(dead, test_only)
     print("=" * 72)
     print("CHECK 1 - DEAD SYMBOLS (zero references anywhere; HIGH confidence)")
     print("=" * 72)

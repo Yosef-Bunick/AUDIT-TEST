@@ -10,9 +10,11 @@ Answers "is it connected?" via AST analysis:
   CHECK 9 - STDOUT PROTOCOL (__EVENT__/__RESULT__ markers)
 """
 
+import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from audit_code.audit_shared import utf8_subprocess_env
@@ -90,3 +92,41 @@ def run(target_root: Path, strict: bool = True) -> AuditResult:
         stdout=out,
         stderr=err,
     )
+
+
+def collect_dead_symbols(target_root: Path) -> list[dict]:
+    """Return the wiring audit's dead symbols as ``[{name, file, line, kind}]``.
+
+    Runs the wiring script with ``--dead-json`` pointed at a temp file and reads
+    the structured result back — the same subprocess contract as :func:`run`, so
+    the target's own environment/encoding is honoured.
+    """
+    target_root = Path(target_root)
+    with tempfile.NamedTemporaryFile(
+        "r", suffix=".json", delete=False, encoding="utf-8"
+    ) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                str(_SCRIPT),
+                "--path",
+                str(target_root),
+                "--dead-json",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+            cwd=str(target_root),
+            env=utf8_subprocess_env(),
+        )
+        data = json.loads(tmp_path.read_text(encoding="utf-8"))
+        return data.get("dead", [])
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        return []
+    finally:
+        tmp_path.unlink(missing_ok=True)
