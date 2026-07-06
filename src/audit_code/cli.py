@@ -67,6 +67,7 @@ ALL_MODULES = {
     "dotnet-format",
     "clang-tidy",
     "cppcheck",
+    "deps",
     "htmlhint",
     "stylelint",
 }
@@ -220,6 +221,7 @@ def build_audit_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cppcheck", action="store_true", help="Run cppcheck")
     parser.add_argument("--htmlhint", action="store_true", help="Run htmlhint")
     parser.add_argument("--stylelint", action="store_true", help="Run stylelint")
+    parser.add_argument("--deps", action="store_true", help="Run dependency scanner")
     parser.add_argument(
         "-s",
         "--skip",
@@ -295,6 +297,7 @@ def _resolve_modules(args: argparse.Namespace) -> set[str] | None:
             "s": "suite",
             "l": "lint",
             "b": "black",
+            "d": "deps",
         }
         raw = {s.strip() for s in re.split(r"[, ]+", args.skip) if s.strip()}
         skip_set = {_MODULE_SHORT.get(x, x) for x in raw}
@@ -305,7 +308,7 @@ def _resolve_modules(args: argparse.Namespace) -> set[str] | None:
             result -= slow
         return result
     if args.min:
-        return {"syntax", "wiring", "phd", "quality"}
+        return {"syntax", "wiring", "phd", "quality", "deps"}
     return None  # all modules
 
 
@@ -1072,6 +1075,7 @@ def _expand_bare_words() -> None:
         "clang-tidy": "--clang-tidy",
         "cppcheck": "--cppcheck",
         "htmlhint": "--htmlhint",
+        "deps": "--deps",
         "stylelint": "--stylelint",
         # module shortcuts
         "q": "--quality",
@@ -1080,6 +1084,7 @@ def _expand_bare_words() -> None:
         "r": "--runtime",
         "l": "--lint",
         "b": "--black",
+        "d": "--deps",
         "s": "--suite",
         # severity
         "high": "--high",  # h, -h
