@@ -75,6 +75,7 @@ audit-test -s "s q"            # skip whats in next value "suite + quality"
 | `q` | quality | black, ruff, mypy, CVE, coverage |
 | `l` | lint | ruff lint |
 | `b` | black | black format |
+| `d` | deps | dependency scanner |
 
 **Mode shortcuts:**
 
@@ -103,7 +104,7 @@ All forms work — bare words, `-short`, or `--long`:
 | `full` | `-F` | `--full` | complete analysis |
 | `fast` | | `--fast` | skip slow checks |
 | `verbose` | `-v` | `--verbose` | full detail output |
-| `min` | | `--min` | fast: wiring + phd + quality |
+| `min` | | `--min` | fast: wiring + phd + quality + deps |
 | **Options** |
 | | `-p` | `--path PATH` | project directory |
 | `skip` | `-s` | `--skip MODULES` | skip modules |
@@ -120,6 +121,7 @@ All forms work — bare words, `-short`, or `--long`:
 | `tests` | | `--tests` | non-Python test suites |
 | `lint` `l` | | `--lint` | ruff lint |
 | `black` `b` | | `--black` | black format |
+| `deps` `d` | | `--deps` | dependency scanner |
 | **Security integrations** |
 | `semgrep` | | `--semgrep` | semgrep (structural) |
 | `bandit` | | `--bandit` | bandit (Python security) |

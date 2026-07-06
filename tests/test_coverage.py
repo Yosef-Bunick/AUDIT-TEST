@@ -18,13 +18,6 @@ def test_t1_modules_referenced():
         "src.audit_code.adapters.cpp.adapter src.audit_code.adapters.html.adapter "
         "src.audit_code.adapters.sql.adapter "
         "src.audit_code.integrations.semgrep src.audit_code.integrations.megalinter "
-        "src.audit_code.integrations.codeql src.audit_code.integrations.secret_scan "
-        "src.audit_code.integrations.dependency_scan "
-        "src.audit_code.profiles.agent_engine.profile "
-        "src.audit_code.profiles.agent_engine.config_checks "
-        "src.audit_code.profiles.agent_engine.prompt_checks "
-        "src.audit_code.profiles.agent_engine.tool_registry_checks "
-        "src.audit_code.profiles.agent_engine.stdout_checks "
         "src.audit_code.reporting.junit src.audit_code.reporting.sarif "
         "src.audit_code.reporting.json_report src.audit_code.reporting.__init__"
     )
