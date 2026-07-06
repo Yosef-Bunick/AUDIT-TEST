@@ -17,15 +17,6 @@ Grep: `grep -rn "#needs fix" src/`
 Known technical debt items not yet addressed. Each is an acknowledged
 gap — the audit still reports it but won't suppress it like `# audit: ok`.
 
-## Completed (0.3.x)
-
-| Version | What |
-|---------|------|
-| 0.3.8 | graph command (dependency tracer), D1b cross-name duplicate detection |
-| 0.3.7 | scan context scanner, deps module, CLI auto-discovery tests |
-| 0.3.6 | agent-engine profile moved to thirdDraftAgentLoop, dead stubs deleted |
-| 0.3.5 | scan command with +N/-N syntax + --json |
-| 0.3.4 | deps wiring, megalinter tagged #considering |
 
 ## Future
 

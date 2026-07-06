@@ -304,7 +304,7 @@ def compute(x):               # DOC: no docstring
 
 | Severity | Count | Rules |
 |----------|-------|-------|
-| HIGH | 10 | C1, C2, SEC1, SEC2, SEC3, B1, F1, P1, E1, E2, D2 |
-| MEDIUM | 20 | C3, C4, C5, C6, F2, F3, F4, B2, G1, G2, D1, D3, D4, D5, P4, T1, T2, T3, T4, T5, DG1 |
+| HIGH | 11 | C1, C2, SEC1, SEC2, SEC3, B1, F1, P1, E1, E2, D2 |
+| MEDIUM | 21 | C3, C4, C5, C6, F2, F3, F4, B2, G1, G2, D1, D3, D4, D5, P4, T1, T2, T3, T4, T5, DG1 |
 | INFO | 6 | C2i, E1i, F2i, B3, P2, P3 |
 | INFO (summary) | 1 | DOC |
