@@ -177,7 +177,10 @@ def test_unrecognized(args: str):
 def _extract_word_map():
     """Parse WORD_MAP dict from cli.py source — keeps test in sync with code."""
     import re
-    src = (Path(__file__).resolve().parent.parent / "src" / "audit_code" / "cli.py").read_text()
+
+    src = (
+        Path(__file__).resolve().parent.parent / "src" / "audit_code" / "cli.py"
+    ).read_text()
     in_block = False
     entries = {}
     for line in src.splitlines():
@@ -205,7 +208,10 @@ def test_word_map_complete():
 def test_skip_shortcuts():
     """Every _MODULE_SHORT entry must be a valid --skip target."""
     import re
-    src = (Path(__file__).resolve().parent.parent / "src" / "audit_code" / "cli.py").read_text()
+
+    src = (
+        Path(__file__).resolve().parent.parent / "src" / "audit_code" / "cli.py"
+    ).read_text()
     in_block = False
     ok = 0
     for line in src.splitlines():
@@ -217,6 +223,45 @@ def test_skip_shortcuts():
         if in_block:
             m = re.match(r'\s*"(\S+)":\s*"(\S+)"', line)
             if m:
-                assert _recognized(f"--skip {m.group(1)}"), f"--skip {m.group(1)} not recognized"
+                assert _recognized(
+                    f"--skip {m.group(1)}"
+                ), f"--skip {m.group(1)} not recognized"
                 ok += 1
     assert ok >= 8, f"expected >=8 _MODULE_SHORT entries, got {ok}"
+
+
+# ── Severity resolution + mutual exclusion ───────────────────────────────────
+
+
+def test_severity_resolution():
+    """_resolve_severity maps flags to correct severity strings."""
+    from audit_code.cli import _resolve_severity
+    parser = build_audit_parser()
+
+    cases = [
+        ("--high", "HIGH"),
+        ("--medium", "MEDIUM"),
+        ("--info", None),
+        ("--all", None),
+        ("", "HIGH"),  # default
+    ]
+    for flag, expected in cases:
+        argv = [flag] if flag else []
+        args, _ = parser.parse_known_args(argv)
+        assert _resolve_severity(args) == expected, f"{flag or 'default'} -> {_resolve_severity(args)}"
+
+
+def test_mutually_exclusive_severity():
+    """--high --medium must be rejected by argparse."""
+    parser = build_audit_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--high", "--medium"])
+
+
+def test_verbose_with_flags():
+    """-v/--verbose combines with severity flags."""
+    parser = build_audit_parser()
+    args, _ = parser.parse_known_args(["--verbose"])
+    assert args.verbose
+    args, _ = parser.parse_known_args(["-v", "--high"])
+    assert args.verbose and args.high
