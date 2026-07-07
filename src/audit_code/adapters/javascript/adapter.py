@@ -27,6 +27,13 @@ _TSC_ERR = re.compile(r"^(.*?)\((\d+),\d+\): error (TS1\d{3}): (.*)$")
 _TSC_ANY = re.compile(r": error TS\d+:")
 
 
+def _walk_ts(node):
+    """Yield all nodes in a tree-sitter tree."""
+    yield node
+    for child in node.children:
+        yield from _walk_ts(child)
+
+
 class JavaScriptAdapter(LanguageAdapter):
     """Language adapter for JavaScript/TypeScript projects."""
 
@@ -97,11 +104,54 @@ class JavaScriptAdapter(LanguageAdapter):
                     f"{total_errs - syntax_errs} type error(s) not judged here"
                 )
             else:
+                # No tsc available — use tree-sitter for JSX syntax check
+                ts_checked = cls._check_jsx_syntax(root, typed, findings, budget)
                 notes.append(
-                    f"{len(typed)} TS/JSX file(s) NOT checked "
-                    "(needs tsc + tsconfig.json)"
+                    f"{ts_checked}/{len(typed)} TS/JSX file(s) checked via tree-sitter"
+                    if ts_checked
+                    else f"{len(typed)} TS/JSX file(s) NOT checked "
+                    "(needs tsc + tsconfig.json or tree-sitter)"
                 )
         return cls.result(findings, notes)
+
+    @classmethod
+    def _check_jsx_syntax(cls, root: Path, files: list, findings: list, budget) -> int:
+        """Fallback JSX syntax check via tree-sitter when tsc isn't available."""
+        try:
+            import tree_sitter as ts
+            import tree_sitter_javascript as tsjs
+            from tree_sitter import Language
+        except ImportError:
+            return 0
+        try:
+            js_lang = Language(tsjs.language())
+            parser = ts.Parser(js_lang)
+        except Exception:
+            return 0
+
+        checked = 0
+        for f in files[:MAX_PER_FILE_CHECKS]:
+            if budget.exhausted():
+                break
+            try:
+                text = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            tree = parser.parse(text.encode())
+            if tree.root_node.has_error:
+                # Find the error node
+                for node in _walk_ts(tree.root_node):
+                    if node.type == "ERROR" or node.is_missing:
+                        findings.append(
+                            cls.finding(
+                                f"parse error near '{text[max(0,node.start_byte-10):node.end_byte+10]}'",
+                                file=rel(f, root),
+                                line=node.start_point[0] + 1,
+                            )
+                        )
+                        break
+            checked += 1
+        return checked
 
     @staticmethod
     def _find_tsc(root: Path) -> list | None:

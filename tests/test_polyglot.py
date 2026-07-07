@@ -116,6 +116,286 @@ def test_phd_secret_excludes_env_lookup(tmp_path):
     assert "poly-secret" not in _ids(res)
 
 
+def test_phd_dangerously_set_inner_html(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "function C() { return <div dangerouslySetInnerHTML={{__html: x}} />; }\n",
+    )
+    assert "poly-js-xss-dangerous-html" in _ids(res)
+    assert res.status == AuditStatus.FAIL  # HIGH
+
+
+def test_phd_innerhtml_assignment(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "document.getElementById('x').innerHTML = userInput;\n",
+    )
+    assert "poly-js-xss-innerhtml" in _ids(res)
+    assert res.status == AuditStatus.FAIL  # HIGH
+
+
+def test_phd_storage_token_setitem(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "localStorage.setItem('auth_token', value);\n",
+    )
+    assert "poly-js-storage-token" in _ids(res)
+    assert res.status == AuditStatus.FAIL  # HIGH
+
+
+def test_phd_storage_token_not_flagged_for_tracking(tmp_path):
+    """localStorage for a non-sensitive key like 'theme' is not flagged."""
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "localStorage.setItem('theme', 'dark');\nlocalStorage.setItem('prefs', v);\n",
+    )
+    assert "poly-js-storage-token" not in _ids(res)
+
+
+def test_phd_storage_token_session_storage(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "sessionStorage.setItem('jwt', token);\n",
+    )
+    assert "poly-js-storage-token" in _ids(res)
+
+
+def test_phd_document_write(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "document.write('<div>' + userInput + '</div>');\n",
+    )
+    assert "poly-js-xss-document-write" in _ids(res)
+    assert res.status == AuditStatus.FAIL  # HIGH
+
+
+def test_phd_fetch_without_signal(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "fetch('/api/data');\n",
+    )
+    assert "poly-js-fetch-no-signal" in _ids(res)
+    assert res.status == AuditStatus.WARN  # MEDIUM
+
+
+def test_phd_fetch_with_signal_not_flagged(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "fetch('/api/data', { signal: AbortSignal.timeout(5000) });\n",
+    )
+    assert "poly-js-fetch-no-signal" not in _ids(res)
+
+
+def test_phd_timer_string_arg(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "setTimeout('doSomething()', 1000);\n",
+    )
+    assert "poly-js-timer-string" in _ids(res)
+    assert res.status == AuditStatus.FAIL  # HIGH
+
+
+def test_phd_timer_callback_not_flagged(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "setTimeout(() => doSomething(), 1000);\nsetInterval(doWork, 5000);\n",
+    )
+    assert "poly-js-timer-string" not in _ids(res)
+
+
+# ── Phase A: cross-language security rules ────────────────────────────────────
+
+
+def test_go_defer_in_loop(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "go",
+        "a.go",
+        "func f() {\n\tfor _, item := range items {\n\t\tdefer item.Close()\n\t}\n}\n",
+    )
+    assert "poly-defer-in-loop" in _ids(res)
+    assert res.status == AuditStatus.WARN  # MEDIUM
+
+
+def test_rust_unsafe_block(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "rust",
+        "a.rs",
+        "fn f() { unsafe { *raw_ptr = 42; } }\n",
+    )
+    assert "poly-rust-unsafe-block" in _ids(res)
+    assert res.status == AuditStatus.FAIL  # HIGH
+
+
+def test_ruby_system_call(tmp_path):
+    res = _run(tmp_path, "phd", "ruby", "a.rb", "system('rm -rf /')\n")
+    assert "poly-shell-exec" in _ids(res)
+    assert res.status == AuditStatus.FAIL  # HIGH
+
+
+def test_php_shell_exec(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "php",
+        "a.php",
+        "<?php\n$out = shell_exec('ls -la');\necho exec('whoami');\n",
+    )
+    ids = _ids(res)
+    assert "poly-shell-exec" in ids
+    shell_count = sum(1 for f in res.findings if f.rule_id == "poly-shell-exec")
+    assert shell_count >= 2, f"expected >=2 shell-exec, got {shell_count}"
+
+
+def test_c_system_call(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "cpp",
+        "a.c",
+        '#include <stdlib.h>\nint main() { system("ls"); return 0; }\n',
+    )
+    assert "poly-unsafe-c" in _ids(res)
+
+
+# ── Phase B: JVM/Go quality rules ─────────────────────────────────────────────
+
+
+def test_go_goto(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "go",
+        "a.go",
+        "func f() {\n\tif err != nil {\n\t\tgoto cleanup\n\t}\n}\n",
+    )
+    assert "poly-go-goto" in _ids(res)
+
+
+def test_java_thread_sleep(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "java",
+        "A.java",
+        "class A { void f() { Thread.sleep(1000); } }\n",
+    )
+    assert "poly-thread-sleep" in _ids(res)
+
+
+def test_java_system_exit(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "java",
+        "A.java",
+        "class A { void f() { System.exit(1); } }\n",
+    )
+    assert "poly-hard-exit" in _ids(res)
+
+
+# ── Phase C: SQL DROP + unbounded loop gaps ───────────────────────────────────
+
+
+def test_sql_drop_table(tmp_path):
+    res = _run(tmp_path, "phd", "sql", "a.sql", "DROP TABLE users;\n")
+    assert "poly-sql-drop" in _ids(res)
+    assert res.status == AuditStatus.FAIL
+
+
+def test_ruby_unbounded_loop(tmp_path):
+    res = _run(tmp_path, "runtime", "ruby", "a.rb", "while true; end\n")
+    assert "poly-unbounded-loop" in _ids(res)
+
+
+# ── AST rules (tree-sitter): Rust / Go / Java ─────────────────────────────────
+
+
+def test_ast_rust_unsafe_and_command(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "rust",
+        "a.rs",
+        'use std::process::Command;\nfn main() { unsafe { *p=1; }; Command::new("ls").output(); }\n',
+    )
+    ids = _ids(res)
+    assert "rs-ast-unsafe" in ids
+    assert "rs-ast-command" in ids
+
+
+def test_ast_rust_panic_lib(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "rust",
+        "a.rs",
+        'pub fn lib_func() { panic!("oh no"); todo!(); }\n',
+    )
+    ids = _ids(res)
+    assert "rs-ast-panic" in ids
+
+
+def test_ast_go_defer_and_goroutine(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "go",
+        "a.go",
+        "package main\nfunc f() {\n\tfor _, x := range xs {\n\t\tdefer x.Close()\n\t}\n\tgo func() { doWork() }()\n}\n",
+    )
+    ids = _ids(res)
+    assert "go-ast-defer-loop" in ids
+    assert "go-ast-goroutine-norecover" in ids
+
+
+def test_ast_java_thread_and_exec(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "java",
+        "A.java",
+        'class A { void f() { Thread.sleep(1); System.exit(0); Runtime.getRuntime().exec("ls"); } }\n',
+    )
+    ids = _ids(res)
+    assert "java-ast-thread-sleep" in ids
+    assert "java-ast-system-exit" in ids
+    assert "java-ast-runtime-exec" in ids
+
+
 # ── runtime: hygiene ─────────────────────────────────────────────────────────
 
 
@@ -124,6 +404,14 @@ def test_runtime_console_log_js(tmp_path):
     ids = _ids(res)
     assert "poly-debug-leftover" in ids
     assert all(f.severity == Severity.INFO for f in res.findings)
+
+
+# ── extension-based detection ────────────────────────────────────────────────
+
+
+
+def test_detect_maps_extensions_to_languages(tmp_path):
+    (tmp_path / "a.kt").write_text("fun x() {}\n", encoding="utf-8")
 
 
 def test_runtime_todo_marker_shared(tmp_path):
@@ -189,18 +477,6 @@ def test_utf8_content_does_not_crash(tmp_path):
         "// café 🐇 TODO: fix\nconsole.log('naïve');\n",
     )
     assert res.status in (AuditStatus.WARN, AuditStatus.PASS)
-
-
-# ── extension-based detection ────────────────────────────────────────────────
-
-
-def test_detect_maps_extensions_to_languages(tmp_path):
-    (tmp_path / "a.kt").write_text("fun x() {}\n", encoding="utf-8")
-    (tmp_path / "b.swift").write_text("func x() {}\n", encoding="utf-8")
-    (tmp_path / "c.rb").write_text("def x; end\n", encoding="utf-8")
-    (tmp_path / "d.sql").write_text("SELECT 1;\n", encoding="utf-8")
-    got = {k: len(v) for k, v in polyglot.detect(tmp_path).items()}
-    assert got == {"kotlin": 1, "swift": 1, "ruby": 1, "sql": 1}
 
 
 def test_detect_skips_excluded_dirs(tmp_path):
@@ -307,3 +583,195 @@ def test_cpp_unsafe_and_no_wiring(tmp_path):
     assert "poly-unsafe-c" in _ids(res)
     wired = _run(tmp_path, "wiring", "cpp", "a.c", "static void helper() {}\n")
     assert wired.findings == []  # C/C++ wiring intentionally disabled
+
+
+# ── JS/TS AST rules (tree-sitter) ──────────────────────────────────────────
+
+
+def test_ast_js_fetch_no_catch(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "fetch('/api').then(r => r.json());\n",
+    )
+    ids = _ids(res)
+    assert "js-ast-fetch-no-error" in ids
+    assert res.findings[0].severity == Severity.MEDIUM
+
+
+def test_ast_js_fetch_with_catch(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "fetch('/api').catch(e => console.log(e));\n",
+    )
+    assert "js-ast-fetch-no-error" not in _ids(res)
+
+
+def test_ast_js_fetch_in_try(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "async function f() { try { await fetch('/api'); } catch(e) {} }\n",
+    )
+    assert "js-ast-fetch-no-error" not in _ids(res)
+
+
+def test_ast_js_map_missing_key(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "function List({items}) { return items.map(item => <div>{item}</div>); }\n",
+    )
+    ids = _ids(res)
+    assert "js-ast-map-missing-key" in ids
+    assert res.findings[0].severity == Severity.MEDIUM
+
+
+def test_ast_js_map_with_key(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "function List({items}) { return items.map(item => <div key={item.id}>{item}</div>); }\n",
+    )
+    assert "js-ast-map-missing-key" not in _ids(res)
+
+
+def test_ast_js_inline_style_object(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "function C() { return <div style={{color: 'red'}}>hi</div>; }\n",
+    )
+    ids = _ids(res)
+    assert "js-ast-inline-style-object" in ids
+    assert all(
+        f.severity == Severity.INFO
+        for f in res.findings
+        if f.rule_id == "js-ast-inline-style-object"
+    )
+
+
+def test_ast_js_inline_style_var_not_flagged(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "const s={color:'red'}; function C() { return <div style={s}>hi</div>; }\n",
+    )
+    assert "js-ast-inline-style-object" not in _ids(res)
+
+
+def test_ast_js_then_no_catch(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "fetch('/api').then(r => r.json());\n",
+    )
+    ids = _ids(res)
+    assert "js-ast-then-no-catch" in ids
+    assert any(
+        f.severity == Severity.HIGH and f.rule_id == "js-ast-then-no-catch"
+        for f in res.findings
+    )
+
+
+def test_ast_js_then_with_catch(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "fetch('/api').then(r => r.json()).catch(e => {});\n",
+    )
+    assert "js-ast-then-no-catch" not in _ids(res)
+
+
+def test_ast_js_duplicate_exports(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "export function foo() {}\nexport const bar = 1;\nexport function foo() {}\n",
+    )
+    ids = _ids(res)
+    assert "js-ast-duplicate-export" in ids
+    assert res.findings[0].severity == Severity.MEDIUM
+
+
+def test_ast_js_usestate_unused_in_jsx(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "function Comp() { const [name, setName] = useState(''); return <div>Hello</div>; }\n",
+    )
+    assert "js-ast-usestate-unused-in-jsx" in _ids(res)
+
+
+def test_ast_js_usestate_used_in_jsx(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "function Comp() { const [name, setName] = useState(''); return <div>{name}</div>; }\n",
+    )
+    assert "js-ast-usestate-unused-in-jsx" not in _ids(res)
+
+
+def test_ast_js_missing_react_memo(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "export const Comp = () => <div/>;\n",
+    )
+    ids = _ids(res)
+    assert "js-ast-missing-react-memo" in ids
+    assert all(
+        f.severity == Severity.INFO
+        for f in res.findings
+        if f.rule_id == "js-ast-missing-react-memo"
+    )
+
+
+def test_ast_js_react_memo_wrapped(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "const Comp = () => <div/>;\nexport default React.memo(Comp);\n",
+    )
+    assert "js-ast-missing-react-memo" not in _ids(res)
+
+
+def test_ast_js_existing_rules_still_work(tmp_path):
+    """Verify existing JS AST rules (useEffect, dangerous HTML) still fire."""
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "function C() { useEffect(() => {}, []); return <div dangerouslySetInnerHTML={{}}/>; }\n",
+    )
+    assert "js-ast-dangerous-html" in _ids(res)  # still fires

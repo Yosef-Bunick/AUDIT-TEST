@@ -43,6 +43,16 @@ LANGUAGE_LINTERS: dict[str, list[tuple[str, str]]] = {
     "csharp": [("dotnet-format", "dotnet format")],
     "cpp": [("clang-tidy", "clang-tidy"), ("cppcheck", "cppcheck")],
     "html": [("htmlhint", "HTMLHint"), ("stylelint", "Stylelint")],
+    "php": [("phpstan", "PHPStan")],
+    "ruby": [("rubocop", "RuboCop")],
+    "swift": [("swiftlint", "SwiftLint")],
+    "kotlin": [("detekt", "detekt")],
+    "dart": [("dart-analyze", "dart analyze")],
+    "scala": [("scalafix", "Scalafix")],
+    "elixir": [("credo", "Credo")],
+    "zig": [("zig-fmt", "zig fmt")],
+    "lua": [("luacheck", "Luacheck")],
+    "haskell": [("hlint", "HLint")],
 }
 
 

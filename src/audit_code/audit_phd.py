@@ -843,6 +843,55 @@ def main():
                         f"{name} = Lock() - never acquired in this file",
                     )
 
+        # F5 - lock ordering (same function, different branches)
+        # Detects: branch A acquires X then Y, branch B acquires Y then X → deadlock
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # Collect lock acquisition sequences per branch
+            acquires: list[list[str]] = []  # each branch = ordered list of lock names
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.With):
+                    for item in sub.items:
+                        ctx = item.context_expr
+                        name = None
+                        if isinstance(ctx, ast.Name):
+                            name = ctx.id
+                        elif isinstance(ctx, ast.Attribute):
+                            name = ctx.attr
+                        if name:
+                            acquires.append([name])
+                elif isinstance(sub, ast.Call) and call_name(sub) == "acquire":
+                    rcv = receiver_name(sub)
+                    if rcv:
+                        acquires.append([rcv])
+                elif isinstance(sub, ast.Expr) and isinstance(sub.value, ast.Call):
+                    cn = call_name(sub.value)
+                    if cn == "acquire":
+                        rcv = receiver_name(sub.value)
+                        if rcv:
+                            acquires.append([rcv])
+
+            if len(acquires) < 2:
+                continue
+            # Check for ordering conflicts: any pair (X,Y) where X before Y in one
+            # branch and Y before X in another
+            seen_pairs: set[tuple[str, str]] = set()
+            for i in range(len(acquires) - 1):
+                a, b = acquires[i][0], acquires[i + 1][0]
+                if a == b:
+                    continue
+                if (b, a) in seen_pairs:
+                    sink.add(
+                        "F5",
+                        f,
+                        node.lineno,
+                        f"potential deadlock: locks acquired in inconsistent order "
+                        f"({a}→{b} vs {b}→{a}) in function {node.name}()",
+                    )
+                    break
+                seen_pairs.add((a, b))
+
         # F3 - import-time side effects (main-guard excluded)
         def top_stmts(body):
             for st in body:
@@ -1026,6 +1075,117 @@ def main():
         if n_lines > 900:
             sink.add("DG1", f, 1, f"file is {n_lines} lines - god file")
 
+        # C7 — rmtree without OSError guard
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and call_name(node) == "rmtree":
+                if receiver_name(node) in ("shutil", ""):
+                    if not guarded_against_oserror(node):
+                        # ignore_errors=True already handles the error
+                        if any(
+                            kw.arg == "ignore_errors"
+                            and isinstance(kw.value, ast.Constant)
+                            and kw.value.value is True
+                            for kw in node.keywords
+                        ):
+                            continue
+                        sink.add(
+                            "C7",
+                            f,
+                            node.lineno,
+                            "shutil.rmtree() without try/except OSError — "
+                            "permission errors crash the process",
+                        )
+
+        # C8 — except: continue (silently discards errors)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ExceptHandler):
+                if len(node.body) == 1 and isinstance(node.body[0], ast.Continue):
+                    # Only flag bare except or except Exception (not specific types)
+                    if node.type is None or (
+                        isinstance(node.type, ast.Name) and node.type.id == "Exception"
+                    ):
+                        sink.add(
+                            "C8",
+                            f,
+                            node.lineno,
+                            "except: continue silently discards errors — "
+                            "at minimum log the exception",
+                        )
+
+        # C9 — float equality comparison
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Compare):
+                if any(isinstance(op, (ast.Eq, ast.NotEq)) for op in node.ops):
+                    has_float = any(
+                        isinstance(c, ast.Constant) and isinstance(c.value, float)
+                        for c in ([node.left] + list(node.comparators))
+                    )
+                    if has_float:
+                        sink.add(
+                            "C9",
+                            f,
+                            node.lineno,
+                            "float == comparison — floating-point rounding "
+                            "makes equality unreliable (0.1+0.2 != 0.3)",
+                        )
+
+        # SEC4 — yaml.load() without SafeLoader
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and call_name(node) == "load":
+                if receiver_name(node) in ("yaml", ""):
+                    has_safeloader = any(
+                        kw.arg == "Loader"
+                        and isinstance(kw.value, ast.Attribute)
+                        and kw.value.attr == "SafeLoader"
+                        for kw in node.keywords
+                    )
+                    if not has_safeloader:
+                        sink.add(
+                            "SEC4",
+                            f,
+                            node.lineno,
+                            "yaml.load() without Loader=yaml.SafeLoader — "
+                            "arbitrary object deserialization (RCE risk)",
+                        )
+
+        # B4 — tempfile.mktemp() / os.tempnam() (TOCTOU race)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                cn = call_name(node)
+                if cn == "mktemp" and receiver_name(node) in ("tempfile", ""):
+                    sink.add(
+                        "B4",
+                        f,
+                        node.lineno,
+                        "tempfile.mktemp() is race-prone — use "
+                        "tempfile.mkstemp() or TemporaryFile instead",
+                    )
+                elif cn == "tempnam" and receiver_name(node) in ("os", ""):
+                    sink.add(
+                        "B4",
+                        f,
+                        node.lineno,
+                        "os.tempnam() is race-prone — use "
+                        "tempfile.mkstemp() instead",
+                    )
+
+        # G3 — __init__ returning non-None (TypeError at runtime)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "__init__":
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Return) and sub.value is not None:
+                        if not (
+                            isinstance(sub.value, ast.Constant)
+                            and sub.value.value is None
+                        ):
+                            sink.add(
+                                "G3",
+                                f,
+                                sub.lineno,
+                                "__init__ returns non-None — causes "
+                                "TypeError at instantiation",
+                            )
+
     # ── cross-file checks ────────────────────────────────────────────────
 
     # D1 - duplicate module-level functions
@@ -1073,7 +1233,7 @@ def main():
             f"identical bodies, different names: {', '.join(sorted(names))}",
         )
 
-    # D2 - circular imports (module level)
+    # D2 - circular imports (module level) — iterative Tarjan SCC
     def modname(p):
         parts = list(p.relative_to(ROOT).parts)
         parts[-1] = parts[-1][:-3]
@@ -1090,39 +1250,55 @@ def main():
                 for a in st.names:
                     if a.name in mods:
                         edges[src].add(a.name)
-    idx, low, onstk, stk = {}, {}, set(), []
-    counter = [0]
-    sys.setrecursionlimit(
-        10000
-    )  # needs fix (iterative Tarjan SCC instead of recursion hack)
 
-    def strongconnect(v):
-        idx[v] = low[v] = counter[0]
-        counter[0] += 1
-        stk.append(v)
-        onstk.add(v)
-        for w in edges.get(v, ()):
-            if w not in idx:
-                strongconnect(w)
-                low[v] = min(low[v], low[w])
-            elif w in onstk:
-                low[v] = min(low[v], idx[w])
-        if low[v] == idx[v]:
-            comp = []
-            while True:
-                w = stk.pop()
-                onstk.discard(w)
-                comp.append(w)
-                if w == v:
-                    break
-            if len(comp) > 1:
-                sink.add(
-                    "D2", " <-> ".join(sorted(comp)), 0, "module-level import cycle"
-                )
+    idx: dict[str, int] = {}
+    low: dict[str, int] = {}
+    onstk: set[str] = set()
+    stk: list[str] = []
+    counter = 0
 
-    for v in list(mods):
-        if v not in idx:
-            strongconnect(v)
+    for v in mods:
+        if v in idx:
+            continue
+        # (node, next_child_index)
+        stack: list[tuple[str, int]] = [(v, 0)]
+        while stack:
+            v, i = stack[-1]
+            if i == 0:  # first visit
+                idx[v] = low[v] = counter
+                counter += 1
+                stk.append(v)
+                onstk.add(v)
+
+            children = list(edges.get(v, ()))
+            if i < len(children):
+                w = children[i]
+                stack[-1] = (v, i + 1)  # advance child pointer
+                if w not in idx:
+                    stack.append((w, 0))
+                elif w in onstk:
+                    low[v] = min(low[v], idx[w])
+            else:
+                # All children processed — pop and check SCC
+                stack.pop()
+                if stack:
+                    pv, _ = stack[-1]
+                    low[pv] = min(low[pv], low[v])
+                if low[v] == idx[v]:
+                    comp = []
+                    while True:
+                        w = stk.pop()
+                        onstk.discard(w)
+                        comp.append(w)
+                        if w == v:
+                            break
+                    if len(comp) > 1:
+                        sink.add(
+                            "D2",
+                            " <-> ".join(sorted(comp)),
+                            0,
+                            "module-level import cycle",
+                        )
 
     # D3 - flat sys.path-dependent imports
     submods = {p.stem: modname(p) for p in trees if len(p.relative_to(ROOT).parts) > 1}
@@ -1381,6 +1557,69 @@ def main():
                     f"in that module{extra}",
                 )
 
+    # T7 - mock.patch targets that don't exist in the module
+    # (same pattern as T5 but for mock.patch / unittest.mock.patch decorators and
+    # context managers). The patch target is the first string arg: 'module.func'.
+    # Skip create=True (intentional dynamic patches).
+    for tp, tt in test_trees.items():
+        tf = rel(tp)
+        # Build alias map for this test file (same as T5)
+        alias = {}
+        for st in ast.walk(tt):
+            if isinstance(st, ast.ImportFrom) and st.module:
+                for a in st.names:
+                    alias[a.asname or a.name] = f"{st.module}.{a.name}"
+            elif isinstance(st, ast.Import):
+                for a in st.names:
+                    alias[a.asname or a.name.split(".")[0]] = (
+                        a.name if a.asname else a.name.split(".")[0]
+                    )
+        for node in ast.walk(tt):
+            if not isinstance(node, ast.Call):
+                continue
+            cn, rcv = call_name(node), receiver_name(node)
+            # mock.patch('a.b.c') or patch('a.b.c') or unittest.mock.patch('a.b.c')
+            if cn != "patch":
+                continue
+            if rcv not in ("mock", "unittest.mock", "patch", ""):
+                continue
+            if any(
+                kw.arg == "create"
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value is True
+                for kw in node.keywords
+            ):
+                continue
+            if not node.args or not isinstance(node.args[0], ast.Constant):
+                continue
+            target_str = node.args[0].value
+            if not isinstance(target_str, str) or "." not in target_str:
+                continue
+            # Split 'module.function' into module and function
+            parts = target_str.rsplit(".", 1)
+            if len(parts) != 2:
+                continue
+            mod, attr = parts
+            # Resolve module alias
+            mod = alias.get(mod, mod)
+            binds = prod_bindings.get(mod)
+            if binds is None:
+                sink.add(
+                    "T7",
+                    tf,
+                    node.lineno,
+                    f"mock.patch('{target_str}') — module '{mod}' not found "
+                    "in production code",
+                )
+            elif attr not in binds:
+                sink.add(
+                    "T7",
+                    tf,
+                    node.lineno,
+                    f"mock.patch('{target_str}') — '{attr}' is not defined "
+                    f"in module '{mod}'",
+                )
+
     # DOC - docstring coverage
     doc_missing = collections.Counter()
     doc_total = collections.Counter()
@@ -1400,8 +1639,11 @@ def main():
         ("SEC1", "HIGH", "subprocess shell=True (Phase 1 security - RCE class)"),
         ("SEC2", "HIGH", "eval/exec/exec_module/pickle.load (Phase 2 security)"),
         ("SEC3", "HIGH", "hardcoded credentials in source (R7 covers logs)"),
+        ("SEC4", "HIGH", "yaml.load() without SafeLoader (RCE risk)"),
         ("B1", "HIGH", "mutable default arguments (Dim 1 - shared-state bugs)"),
+        ("B4", "MEDIUM", "tempfile.mktemp/os.tempnam — race-prone (TOCTOU)"),
         ("F1", "HIGH", "locks defined but never acquired (Dim 3)"),
+        ("F5", "MEDIUM", "lock ordering inconsistency (potential deadlock)"),
         ("P1", "HIGH", "imports inside loop bodies (Phase 4)"),
         ("E1", "HIGH", "prompts frozen at import (engine regression)"),
         ("E2", "HIGH", "hook prompts missing {task} (engine regression)"),
@@ -1414,12 +1656,16 @@ def main():
             "MEDIUM",
             "LLM-parsed dicts indexed bare - KeyError on missing field (Dim 1)",
         ),
+        ("C7", "HIGH", "shutil.rmtree() without try/except OSError (Dim 1)"),
+        ("C8", "MEDIUM", "except: continue — silently discards errors (Dim 1)"),
+        ("C9", "MEDIUM", "float == comparison — floating-point rounding (Dim 1)"),
         ("F2", "MEDIUM", "`global` shared mutable state (Dim 3)"),
         ("F3", "MEDIUM", "import-time side effects (Phase 2)"),
         ("F4", "MEDIUM", "bare cfg[...]/environ[...] indexing (Phase 2)"),
         ("B2", "MEDIUM", "HTTP calls without timeout= (hangs forever)"),
         ("G1", "MEDIUM", "hardcoded tuning knobs outside config (audit S2)"),
         ("G2", "MEDIUM", "module-level mutable state mutated from code (audit S6-04)"),
+        ("G3", "HIGH", "__init__ returning non-None (TypeError at runtime)"),
         ("D1", "MEDIUM", "duplicate function implementations (Phase 3 drift)"),
         ("D3", "MEDIUM", "sys.path-dependent flat imports (Phase 1)"),
         ("D4", "MEDIUM", "hardcoded model strings outside config layer (Phase 1)"),
@@ -1433,6 +1679,11 @@ def main():
             "T5",
             "MEDIUM",
             "monkeypatch/patch targets missing from target module (Dim 2)",
+        ),
+        (
+            "T7",
+            "MEDIUM",
+            "mock.patch targets missing from the patched module (Dim 2)",
         ),
         ("DG1", "MEDIUM", "god functions / classes / files (Dim 4)"),
         ("C2i", "INFO", "best-effort logging swallowed (acceptable; review once)"),
