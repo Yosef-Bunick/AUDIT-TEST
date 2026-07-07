@@ -161,8 +161,93 @@ _BROAD_CATCH_JVM = _rule(
     r"catch\s*\(\s*(?:\w+\s*:\s*)?(Exception|Throwable|RuntimeException|Error)\b",
 )
 
+# ── Cross-language shared rules ───────────────────────────────────────────────
 
-# ── Per-language specs ───────────────────────────────────────────────────────
+_SHELL_EXEC = _rule(
+    "poly-shell-exec",
+    Severity.HIGH,
+    "shell command execution — injection risk, prefer subprocess/exec with args",
+    r"\b(?:system|exec|shell_exec|popen)\s*\(",
+)
+_DEFER_IN_LOOP = _rule(
+    "poly-defer-in-loop",
+    Severity.MEDIUM,
+    "defer inside a loop — resources accumulate, defers run after the function returns",
+    r"(?s)\b(for|range)\b.*?\n.*?\bdefer\b",
+)
+_UNSAFE_RUST = _rule(
+    "poly-rust-unsafe-block",
+    Severity.HIGH,
+    "unsafe block — bypasses Rust's memory safety guarantees",
+    r"\bunsafe\s*\{",
+)
+_THREAD_SLEEP = _rule(
+    "poly-thread-sleep",
+    Severity.MEDIUM,
+    "Thread.sleep() in request handler — blocks the thread pool, use async instead",
+    r"\bThread\.sleep\s*\(|\bThread\.Sleep\s*\(",
+)
+_HARD_EXIT = _rule(
+    "poly-hard-exit",
+    Severity.MEDIUM,
+    "System.exit() / Environment.Exit() — hard shutdown, prefer graceful termination",
+    r"\b(?:System\.exit|Environment\.Exit)\s*\(",
+)
+_GO_GOTO = _rule(
+    "poly-go-goto",
+    Severity.MEDIUM,
+    "goto statement — unstructured control flow, use loops or early returns",
+    r"\bgoto\b",
+)
+
+# ── JavaScript-specific rules ─────────────────────────────────────────────────
+
+_JS_XSS_DANGEROUS_HTML = _rule(
+    "poly-js-xss-dangerous-html",
+    Severity.HIGH,
+    "dangerouslySetInnerHTML — React XSS vector, use a sanitizer instead",
+    r"dangerouslySetInnerHTML",
+)
+_JS_XSS_INNERHTML = _rule(
+    "poly-js-xss-innerhtml",
+    Severity.HIGH,
+    ".innerHTML assignment — DOM XSS vector, use textContent or sanitize",
+    r"\.innerHTML\s*=",
+)
+_JS_STORAGE_TOKEN = _rule(
+    "poly-js-storage-token",
+    Severity.HIGH,
+    "localStorage/sessionStorage storing sensitive data — prefer httpOnly cookies",
+    r"""(?ix)
+        (?:localStorage|sessionStorage)\.setItem\s*\(\s*
+        [\"'](?:token|jwt|auth|access[_-]?token|refresh[_-]?token|
+               secret|api[_-]?key|password|credential)
+    """,
+)
+_JS_XSS_DOCUMENT_WRITE = _rule(
+    "poly-js-xss-document-write",
+    Severity.HIGH,
+    "document.write() — DOM XSS vector, use DOM manipulation instead",
+    r"document\.write\s*\(",
+)
+_JS_FETCH_NO_SIGNAL = _rule(
+    "poly-js-fetch-no-signal",
+    Severity.MEDIUM,
+    "fetch() without AbortSignal — request can hang forever, add a timeout",
+    r"""(?x)
+        \bfetch\s*\(
+        (?!.*\bsignal\b)
+    """,
+)
+_JS_TIMER_STRING = _rule(
+    "poly-js-timer-string",
+    Severity.HIGH,
+    "setTimeout/setInterval with string argument — eval-like code execution",
+    r"(?:setTimeout|setInterval)\s*\(\s*['\"]",
+)
+
+
+# ── Per-language specs ──
 
 _JS = LangSpec(
     language="javascript",
@@ -175,7 +260,16 @@ _JS = LangSpec(
             public=r"\bexport\b",
         ),
     ),
-    phd_rules=(_EMPTY_CATCH, _DYN_EVAL),
+    phd_rules=(
+        _EMPTY_CATCH,
+        _DYN_EVAL,
+        _JS_XSS_DANGEROUS_HTML,
+        _JS_XSS_INNERHTML,
+        _JS_STORAGE_TOKEN,
+        _JS_XSS_DOCUMENT_WRITE,
+        _JS_FETCH_NO_SIGNAL,
+        _JS_TIMER_STRING,
+    ),
     runtime_rules=(_CONSOLE_LOG, _UNBOUNDED),
 )
 
@@ -194,6 +288,8 @@ _GO = LangSpec(
             "error checked but body is empty — the error is ignored",
             r"if\s+err\s*!=\s*nil\s*\{\s*\}",
         ),
+        _DEFER_IN_LOOP,
+        _GO_GOTO,
     ),
     runtime_rules=(_UNBOUNDED,),
 )
@@ -215,6 +311,7 @@ _RUST = LangSpec(
             "panic!/unreachable! aborts the process",
             r"\b(panic|unreachable|todo|unimplemented)\s*!\s*\(",
         ),
+        _UNSAFE_RUST,
     ),
     runtime_rules=(_UNBOUNDED,),
 )
@@ -229,7 +326,7 @@ _JAVA = LangSpec(
             r"(?P<name>[A-Za-z_]\w*)\s*\("
         ),
     ),
-    phd_rules=(_EMPTY_CATCH, _BROAD_CATCH_JVM),
+    phd_rules=(_EMPTY_CATCH, _BROAD_CATCH_JVM, _THREAD_SLEEP, _HARD_EXIT),
     runtime_rules=(
         _rule(
             "poly-debug-leftover",
@@ -250,7 +347,7 @@ _CSHARP = LangSpec(
             r"(?P<name>[A-Za-z_]\w*)\s*\("
         ),
     ),
-    phd_rules=(_EMPTY_CATCH, _BROAD_CATCH_JVM),
+    phd_rules=(_EMPTY_CATCH, _BROAD_CATCH_JVM, _THREAD_SLEEP, _HARD_EXIT),
     runtime_rules=(
         _rule(
             "poly-debug-leftover",
@@ -285,7 +382,7 @@ _CPP = LangSpec(
             "poly-unsafe-c",
             Severity.HIGH,
             "unsafe C function (gets/strcpy/sprintf) — buffer overflow risk",
-            r"\b(gets|strcpy|strcat|sprintf)\s*\(",
+            r"\b(gets|strcpy|strcat|sprintf|system)\s*\(",
         ),
     ),
     runtime_rules=(_UNBOUNDED,),
@@ -383,6 +480,7 @@ _RUBY = LangSpec(
             "rescue Exception / bare rescue catches everything",
             r"rescue\s+Exception\b|rescue\s*(?:=>|$)",
         ),
+        _SHELL_EXEC,
     ),
     runtime_rules=(
         _rule(
@@ -391,6 +489,7 @@ _RUBY = LangSpec(
             "debugger breakpoint left in source (binding.pry / byebug)",
             r"\bbinding\.pry\b|\bbyebug\b",
         ),
+        _UNBOUNDED,
     ),
 )
 
@@ -412,6 +511,7 @@ _PHP = LangSpec(
             "catches a very broad exception type",
             r"catch\s*\(\s*\\?(Exception|Throwable)\b",
         ),
+        _SHELL_EXEC,
     ),
     runtime_rules=(
         _rule(
@@ -528,6 +628,7 @@ _HASKELL = LangSpec(
             "Debug.Trace left in source",
             r"\bDebug\.Trace\b|\btrace\s+",
         ),
+        _UNBOUNDED,
     ),
 )
 
@@ -576,6 +677,12 @@ _SQL = LangSpec(
             "UPDATE without a WHERE clause rewrites every row",
             r"(?is)\bupdate\s+[\w.\"'`]+\s+set\b(?:(?!\bwhere\b)[^;])*;",
         ),
+        _rule(
+            "poly-sql-drop",
+            Severity.HIGH,
+            "DROP TABLE / DROP DATABASE — irreversible data loss",
+            r"(?i)\bdrop\s+(table|database)\b",
+        ),
     ),
     runtime_rules=(
         _rule(
@@ -611,6 +718,66 @@ _ALL_SPECS = (
 SPECS: dict[str, LangSpec] = {s.language: s for s in _ALL_SPECS}
 SPECS["typescript"] = _JS
 SPECS["c"] = _CPP
+
+# AST checkers keyed by language. Populated lazily to avoid import cycles.
+_AST_CHECKS: dict[str, object] = {}
+
+try:
+    from audit_code.adapters.javascript.ast_rules import run as _js_ast_run
+
+    _AST_CHECKS["javascript"] = _js_ast_run
+    _AST_CHECKS["typescript"] = _js_ast_run
+except ImportError:
+    pass  # tree-sitter not installed — regex-only polyglot still works
+
+try:
+    from audit_code.adapters.rust.phd import run as _rust_ast_run
+
+    _AST_CHECKS["rust"] = _rust_ast_run
+except ImportError:
+    pass
+
+try:
+    from audit_code.adapters.go.phd import run as _go_ast_run
+
+    _AST_CHECKS["go"] = _go_ast_run
+except ImportError:
+    pass
+
+try:
+    from audit_code.adapters.java.phd import run as _java_ast_run
+
+    _AST_CHECKS["java"] = _java_ast_run
+except ImportError:
+    pass
+
+try:
+    from audit_code.adapters.csharp.phd import run as _cs_ast_run
+
+    _AST_CHECKS["csharp"] = _cs_ast_run
+except ImportError:
+    pass
+
+try:
+    from audit_code.adapters.kotlin.phd import run as _kt_ast_run
+
+    _AST_CHECKS["kotlin"] = _kt_ast_run
+except ImportError:
+    pass
+
+try:
+    from audit_code.adapters.swift.phd import run as _sw_ast_run
+
+    _AST_CHECKS["swift"] = _sw_ast_run
+except ImportError:
+    pass
+
+try:
+    from audit_code.adapters.php.phd import run as _php_ast_run
+
+    _AST_CHECKS["php"] = _php_ast_run
+except ImportError:
+    pass
 
 # Extension → canonical language, for single-walk detection.
 _EXT_LANG: dict[str, str] = {}
@@ -764,6 +931,9 @@ def run(kind: str, root: Path, language: str, files: list[Path]) -> AuditResult:
         findings = wiring_scan(root, sources, spec)
     elif kind == "phd":
         findings = _apply_rules(root, sources, spec.phd_rules + _SHARED_PHD, language)
+        check = _AST_CHECKS.get(language)
+        if check is not None:
+            findings.extend(check(root, files))  # type: ignore[operator]
     elif kind == "runtime":
         findings = _apply_rules(
             root, sources, spec.runtime_rules + _SHARED_RUNTIME, language

@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 from audit_code.graph import (
-    _parse_imports,
     _package_root,
+    _parse_imports,
     _resolve_local,
     build_graph,
     format_tree,
@@ -49,7 +49,7 @@ def test_resolve_local_returns_none_for_stdlib():
 
 
 def test_build_graph_has_edges():
-    g = build_graph(Path.cwd())
+    g, _ = build_graph(Path.cwd())
     assert len(g) > 10  # more than 10 modules
     # cli.py should have imports
     cli = g.get("src/audit_code/cli.py", set())
@@ -57,7 +57,7 @@ def test_build_graph_has_edges():
 
 
 def test_trace_downstream():
-    g = build_graph(Path.cwd())
+    g, _ = build_graph(Path.cwd())
     node = "src/audit_code/cli.py"
     down = trace_downstream(g, node, 1)
     # Should include cli.py itself + its direct imports
@@ -66,7 +66,7 @@ def test_trace_downstream():
 
 
 def test_trace_upstream():
-    g = build_graph(Path.cwd())
+    g, _ = build_graph(Path.cwd())
     node = "src/audit_code/cli.py"
     up = trace_upstream(g, node, 1)
     assert node in up
@@ -75,7 +75,7 @@ def test_trace_upstream():
 
 
 def test_format_tree_shows_node():
-    g = build_graph(Path.cwd())
+    g, _ = build_graph(Path.cwd())
     node = "src/audit_code/cli.py"
     up = trace_upstream(g, node, 1)
     down = trace_downstream(g, node, 1)
