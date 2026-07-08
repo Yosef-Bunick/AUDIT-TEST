@@ -1,6 +1,7 @@
 """Kotlin adapter — `kotlinc` syntax check."""
 
 import re
+import tempfile
 from pathlib import Path
 
 from audit_code.adapters.base import LanguageAdapter, run_tool, which
@@ -20,8 +21,9 @@ class KotlinAdapter(LanguageAdapter):
         if not kotlinc:
             return cls.skip("kotlinc not found", True)
         paths = [str(f.relative_to(root)) for f in files[:200]]
+        outdir = tempfile.mkdtemp(prefix="kt_")
         rc, out, err = run_tool(
-            [kotlinc, "-Werror", "-d", "/tmp/kt_out"] + paths, root, timeout=120
+            [kotlinc, "-Werror", "-d", outdir] + paths, root, timeout=120
         )
         if rc == -2:
             return cls.skip(f"kotlinc failed: {err}", True)

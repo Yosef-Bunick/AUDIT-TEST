@@ -302,7 +302,6 @@ def _check_god_function(root: Path, sources: dict[Path, str]) -> list[Finding]:
     """DG1-equivalent: functions over 120 lines."""
     findings: list[Finding] = []
     for path, text in sources.items():
-        lines = text.split("\n")
         tree = _PARSER.parse(text.encode())
         for node in _walk(tree.root_node):
             if node.type != "function_item":

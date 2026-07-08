@@ -1,5 +1,6 @@
 """Elixir adapter — `elixirc` syntax check."""
 
+import tempfile
 from pathlib import Path
 
 from audit_code.adapters.base import LanguageAdapter, run_tool, which
@@ -17,8 +18,9 @@ class ElixirAdapter(LanguageAdapter):
         if not elixirc:
             return cls.skip("elixirc not found", True)
         paths = [str(f) for f in files[:200]]
+        outdir = tempfile.mkdtemp(prefix="ex_")
         rc, out, err = run_tool(
-            [elixirc, "--no-docs", "-o", "/tmp/ex_out"] + paths, root, timeout=120
+            [elixirc, "--no-docs", "-o", outdir] + paths, root, timeout=120
         )
         if rc == -2:
             return cls.skip(f"elixirc failed: {err}", True)

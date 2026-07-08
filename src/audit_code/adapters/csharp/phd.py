@@ -236,7 +236,7 @@ def _check_empty_using(root, sources):
     for p, t in sources.items():
         s = t.encode()
         tr = _PARSER.parse(s)
-        pm = _pmap(tr.root_node)
+
         for n in _walk(tr.root_node):
             if n.type != "using_statement":
                 continue
@@ -261,6 +261,7 @@ def _check_module_side_effect(root, sources):
     for p, t in sources.items():
         s = t.encode()
         tr = _PARSER.parse(s)
+
         pm = _pmap(tr.root_node)
         for n in _walk(tr.root_node):
             if n.type not in ("invocation_expression",):

@@ -2,28 +2,28 @@
 
 ## Feature coverage matrix
 
-| Language | Syntax | PhD | Runtime | Wiring | AST rules | Linter | Graph |
-|---|---|---|---|---|---|---|---|
-| **python** | ✓ | ✓ 49 deep | ✓ deep | ✓ deep | ✓ deep | ✓ 5 tools | ✓ imports |
-| **javascript** | ✓ | ✓ 8+9 | ✓ 2 | ✓ | ✓ 9 | ✓ eslint,prettier | ✓ imports |
-| **typescript** | ✓ | ✓ 8+9 | ✓ 2 | ✓ | ✓ 9 | ✓ eslint | ✓ imports |
-| **rust** | ✓ | ✓ 10 AST | ✓ 1 | ✓ | ✓ 10 | ✓ clippy,rustfmt | ✓ imports |
-| **go** | ✓ | ✓ 9 AST | ✓ 1 | ✓ | ✓ 9 | ✓ go-vet,golangci | ✓ imports |
-| **java** | ✓ | ✓ 9 AST | ✓ 2 | ✓ | ✓ 9 | ✓ checkstyle,pmd | ✓ imports |
-| **csharp** | ✓ | ✓ 9 AST | ✓ 2 | ✓ | ✓ 9 | ✓ dotnet-format | ✓ imports |
-| **cpp** | ✓ | ✓ 3 | ✓ 1 | — | — | ✓ clang-tidy,cppcheck | ✓ includes |
-| **kotlin** | ✓ | ✓ 9 AST | ✓ 2 | ✓ | ✓ 9 | ✓ detekt | ✓ imports |
-| **swift** | ✓ | ✓ 9 AST | ✓ 1 | ✓ | ✓ 9 | ✓ swiftlint | ✓ imports |
-| **php** | ✓ | ✓ 9 AST | ✓ 2 | ✓ | ✓ 9 | ✓ phpstan | ✓ imports |
-| **ruby** | ✓ | ✓ 3 | ✓ 2 | ✓ | — | ✓ rubocop | — |
-| **dart** | ✓ | ✓ 1 | ✓ 2 | ✓ | — | ✓ dart-analyze | — |
-| **scala** | ✓ | ✓ 2 | ✓ 2 | ✓ | — | ✓ scalafix | — |
-| **elixir** | ✓ | ✓ 2 | ✓ 1 | ✓ | — | ✓ credo | — |
-| **zig** | ✓ | ✓ 1 | ✓ 1 | ✓ | — | ✓ zig-fmt | — |
-| **lua** | ✓ | ✓ 2 | ✓ 2 | ✓ | — | ✓ luacheck | — |
-| **haskell** | ✓ | ✓ 2 | ✓ 2 | — | — | ✓ hlint | — |
-| **sql** | ✓ | ✓ 3 | ✓ 1 | — | — | — | — |
-| **html** | ✓ | — | — | — | — | ✓ htmlhint,stylelint | — |
+| Language | Syntax | PhD | Runtime | Wiring | AST rules | Linter | Graph | **Coverage** |
+|---|---|---|---|---|---|---|---|---|---|
+| **python** | ✓ | ✓ 49 deep | ✓ deep | ✓ deep | ✓ deep | ✓ 5 tools | ✓ imports | **7/7** |
+| **javascript** | ✓ | ✓ 8+9 | ✓ 2 | ✓ | ✓ 9 | ✓ eslint,prettier | ✓ imports | **7/7** |
+| **typescript** | ✓ | ✓ 8+9 | ✓ 2 | ✓ | ✓ 9 | ✓ eslint | ✓ imports | **7/7** |
+| **rust** | ✓ | ✓ 10 AST | ✓ 1 | ✓ | ✓ 10 | ✓ clippy,rustfmt | ✓ imports | **7/7** |
+| **go** | ✓ | ✓ 9 AST | ✓ 1 | ✓ | ✓ 9 | ✓ go-vet,golangci | ✓ imports | **7/7** |
+| **java** | ✓ | ✓ 9 AST | ✓ 2 | ✓ | ✓ 9 | ✓ checkstyle,pmd | ✓ imports | **7/7** |
+| **csharp** | ✓ | ✓ 9 AST | ✓ 2 | ✓ | ✓ 9 | ✓ dotnet-format | ✓ imports | **7/7** |
+| **kotlin** | ✓ | ✓ 9 AST | ✓ 2 | ✓ | ✓ 9 | ✓ detekt | ✓ imports | **7/7** |
+| **swift** | ✓ | ✓ 9 AST | ✓ 1 | ✓ | ✓ 9 | ✓ swiftlint | ✓ imports | **7/7** |
+| **php** | ✓ | ✓ 9 AST | ✓ 2 | ✓ | ✓ 9 | ✓ phpstan | ✓ imports | **7/7** |
+| **cpp** | ✓ | ✓ 3 | ✓ 1 | — | — | ✓ clang-tidy,cppcheck | ✓ includes | **5/7** |
+| **ruby** | ✓ | ✓ 3 | ✓ 2 | ✓ | — | ✓ rubocop | — | **5/7** |
+| **dart** | ✓ | ✓ 1 | ✓ 2 | ✓ | — | ✓ dart-analyze | — | **5/7** |
+| **scala** | ✓ | ✓ 2 | ✓ 2 | ✓ | — | ✓ scalafix | — | **5/7** |
+| **elixir** | ✓ | ✓ 2 | ✓ 1 | ✓ | — | ✓ credo | — | **5/7** |
+| **zig** | ✓ | ✓ 1 | ✓ 1 | ✓ | — | ✓ zig-fmt | — | **5/7** |
+| **lua** | ✓ | ✓ 2 | ✓ 2 | ✓ | — | ✓ luacheck | — | **5/7** |
+| **haskell** | ✓ | ✓ 2 | ✓ 2 | — | — | ✓ hlint | — | **4/7** |
+| **sql** | ✓ | ✓ 3 | ✓ 1 | — | — | — | — | **3/7** |
+| **html** | ✓ | — | — | — | — | ✓ htmlhint,stylelint | — | **2/7** |
 
 PhD counts: regex rules + AST rules. Python uses its own deep 51-rule AST engine (not polyglot).
 
@@ -108,3 +108,22 @@ All clear.
 | Linter integrations | 22 across 17 languages |
 | Graph languages | 10 (Python, JS/TS, Rust, Go, Java, C#, C/C++, Kotlin, Swift, PHP) |
 | Total tests | 545 |
+
+---
+
+## Coverage by area
+
+How many of the 20 languages cover each area, and which are missing:
+
+| Area | Langs covered | Missing |
+|---|---|---|
+| Syntax | 20/20 | — |
+| PhD | 19/20 | html |
+| Runtime | 18/20 | html only (sql=1) |
+| Wiring | 14/20 | cpp, dart, scala, elixir, zig, lua, haskell, sql, html |
+| AST rules | 11/20 | cpp, ruby, dart, scala, elixir, zig, lua, haskell, sql, html |
+| Linter | 19/20 | sql |
+| Graph | 12/20 | ruby, dart, scala, elixir, zig, lua, haskell, sql |
+
+**Python is the gold standard** — full coverage in every area with 49 deep PhD rules, deep wiring, and deep runtime. The gap (wiring, AST rules, graph) is languages that need cross-file structural analysis, not just regex/single-file — ~350 LOC per language to close.
+

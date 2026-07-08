@@ -409,7 +409,6 @@ def test_runtime_console_log_js(tmp_path):
 # ── extension-based detection ────────────────────────────────────────────────
 
 
-
 def test_detect_maps_extensions_to_languages(tmp_path):
     (tmp_path / "a.kt").write_text("fun x() {}\n", encoding="utf-8")
 
@@ -775,3 +774,64 @@ def test_ast_js_existing_rules_still_work(tmp_path):
         "function C() { useEffect(() => {}, []); return <div dangerouslySetInnerHTML={{}}/>; }\n",
     )
     assert "js-ast-dangerous-html" in _ids(res)  # still fires
+
+
+# ── AST pack registration: skips visible, breakage loud ──────────────────────
+
+
+def test_ast_skip_records_missing_grammar(monkeypatch):
+    """A missing tree-sitter grammar wheel is an expected environment
+    limitation: recorded in _AST_SKIPS so the phd output can say so."""
+    monkeypatch.setattr(polyglot, "_AST_SKIPS", {})
+    exc = ModuleNotFoundError(
+        "No module named 'tree_sitter_xyz'", name="tree_sitter_xyz"
+    )
+    polyglot._ast_skip_or_raise(exc, "fakelang", "otherlang")
+    assert polyglot._AST_SKIPS["fakelang"] == "tree_sitter_xyz not installed"
+    assert polyglot._AST_SKIPS["otherlang"] == "tree_sitter_xyz not installed"
+
+
+def test_ast_skip_reraises_non_grammar_failures(monkeypatch):
+    """A missing module that is NOT a grammar wheel means the rule pack itself
+    is broken — it must raise instead of degrading silently."""
+    import pytest
+
+    monkeypatch.setattr(polyglot, "_AST_SKIPS", {})
+    exc = ModuleNotFoundError("No module named 'zzz'", name="zzz_not_a_grammar")
+    with pytest.raises(ModuleNotFoundError):
+        polyglot._ast_skip_or_raise(exc, "fakelang")
+    assert not polyglot._AST_SKIPS  # a broken pack is not an expected skip
+
+
+def test_every_ast_language_registered_or_skipped():
+    """No language may silently vanish: each AST-capable language is either
+    running (in _AST_CHECKS) or visibly skipped (in _AST_SKIPS)."""
+    ast_langs = (
+        "javascript",
+        "typescript",
+        "rust",
+        "go",
+        "java",
+        "csharp",
+        "kotlin",
+        "swift",
+        "php",
+    )
+    for lang in ast_langs:
+        assert lang in polyglot._AST_CHECKS or lang in polyglot._AST_SKIPS, lang
+
+
+def test_phd_output_notes_skipped_ast_rules(tmp_path, monkeypatch):
+    """When a language's AST pack was skipped, the phd stdout says so."""
+    monkeypatch.setattr(polyglot, "_AST_CHECKS", {})
+    monkeypatch.setattr(
+        polyglot, "_AST_SKIPS", {"javascript": "tree_sitter_javascript not installed"}
+    )
+    res = _run(tmp_path, "phd", "javascript", "a.js", "const x = 1;\n")
+    assert "AST rules not run" in res.stdout
+    assert "tree_sitter_javascript not installed" in res.stdout
+
+
+def test_phd_output_has_no_skip_note_when_ast_ran(tmp_path):
+    res = _run(tmp_path, "phd", "javascript", "a.js", "const x = 1;\n")
+    assert "AST rules not run" not in res.stdout

@@ -719,65 +719,81 @@ SPECS: dict[str, LangSpec] = {s.language: s for s in _ALL_SPECS}
 SPECS["typescript"] = _JS
 SPECS["c"] = _CPP
 
-# AST checkers keyed by language. Populated lazily to avoid import cycles.
+# AST checkers keyed by language. A missing tree-sitter grammar wheel is an
+# environment limitation: recorded in _AST_SKIPS and surfaced as a SKIP note
+# in the phd output. Any other import failure means the rule pack itself is
+# broken and must raise — a blanket `except ImportError: pass` here once hid
+# a wholesale deletion of the JS rules. Only ModuleNotFoundError is caught
+# below, so a pack that imports but lost its `run` still fails loudly.
 _AST_CHECKS: dict[str, object] = {}
+_AST_SKIPS: dict[str, str] = {}
+
+
+def _ast_skip_or_raise(exc: ModuleNotFoundError, *languages: str) -> None:
+    """Record an expected missing-grammar skip; re-raise anything else."""
+    if exc.name and exc.name.startswith("tree_sitter"):
+        for lang in languages:
+            _AST_SKIPS[lang] = f"{exc.name} not installed"
+        return
+    raise exc
+
 
 try:
     from audit_code.adapters.javascript.ast_rules import run as _js_ast_run
-
+except ModuleNotFoundError as exc:
+    _ast_skip_or_raise(exc, "javascript", "typescript")
+else:
     _AST_CHECKS["javascript"] = _js_ast_run
     _AST_CHECKS["typescript"] = _js_ast_run
-except ImportError:
-    pass  # tree-sitter not installed — regex-only polyglot still works
 
 try:
     from audit_code.adapters.rust.phd import run as _rust_ast_run
-
+except ModuleNotFoundError as exc:
+    _ast_skip_or_raise(exc, "rust")
+else:
     _AST_CHECKS["rust"] = _rust_ast_run
-except ImportError:
-    pass
 
 try:
     from audit_code.adapters.go.phd import run as _go_ast_run
-
+except ModuleNotFoundError as exc:
+    _ast_skip_or_raise(exc, "go")
+else:
     _AST_CHECKS["go"] = _go_ast_run
-except ImportError:
-    pass
 
 try:
     from audit_code.adapters.java.phd import run as _java_ast_run
-
+except ModuleNotFoundError as exc:
+    _ast_skip_or_raise(exc, "java")
+else:
     _AST_CHECKS["java"] = _java_ast_run
-except ImportError:
-    pass
 
 try:
     from audit_code.adapters.csharp.phd import run as _cs_ast_run
-
+except ModuleNotFoundError as exc:
+    _ast_skip_or_raise(exc, "csharp")
+else:
     _AST_CHECKS["csharp"] = _cs_ast_run
-except ImportError:
-    pass
 
 try:
     from audit_code.adapters.kotlin.phd import run as _kt_ast_run
-
+except ModuleNotFoundError as exc:
+    _ast_skip_or_raise(exc, "kotlin")
+else:
     _AST_CHECKS["kotlin"] = _kt_ast_run
-except ImportError:
-    pass
 
 try:
     from audit_code.adapters.swift.phd import run as _sw_ast_run
-
+except ModuleNotFoundError as exc:
+    _ast_skip_or_raise(exc, "swift")
+else:
     _AST_CHECKS["swift"] = _sw_ast_run
-except ImportError:
-    pass
 
 try:
     from audit_code.adapters.php.phd import run as _php_ast_run
-
+except ModuleNotFoundError as exc:
+    _ast_skip_or_raise(exc, "php")
+else:
     _AST_CHECKS["php"] = _php_ast_run
-except ImportError:
-    pass
 
 # Extension → canonical language, for single-walk detection.
 _EXT_LANG: dict[str, str] = {}
@@ -927,6 +943,7 @@ def run(kind: str, root: Path, language: str, files: list[Path]) -> AuditResult:
     encoding = configured_encoding(root)
     sources = {f: _read(f, encoding) for f in files}
 
+    notes: tuple[str, ...] = ()
     if kind == "wiring":
         findings = wiring_scan(root, sources, spec)
     elif kind == "phd":
@@ -934,6 +951,11 @@ def run(kind: str, root: Path, language: str, files: list[Path]) -> AuditResult:
         check = _AST_CHECKS.get(language)
         if check is not None:
             findings.extend(check(root, files))  # type: ignore[operator]
+        elif language in _AST_SKIPS:
+            notes = (
+                f"  SKIP: {language} AST rules not run "
+                f"({_AST_SKIPS[language]}); regex rules still ran",
+            )
     elif kind == "runtime":
         findings = _apply_rules(
             root, sources, spec.runtime_rules + _SHARED_RUNTIME, language
@@ -945,11 +967,16 @@ def run(kind: str, root: Path, language: str, files: list[Path]) -> AuditResult:
             stdout=f"SKIP: unknown audit kind {kind!r}",
         )
 
-    return _to_result(audit_id, kind, language, findings, len(files))
+    return _to_result(audit_id, kind, language, findings, len(files), notes)
 
 
 def _to_result(
-    audit_id: str, kind: str, language: str, findings: list[Finding], n_files: int
+    audit_id: str,
+    kind: str,
+    language: str,
+    findings: list[Finding],
+    n_files: int,
+    notes: tuple[str, ...] = (),
 ) -> AuditResult:
     high = sum(1 for f in findings if f.severity == Severity.HIGH)
     med = sum(1 for f in findings if f.severity == Severity.MEDIUM)
@@ -961,6 +988,7 @@ def _to_result(
     lines = [
         f"{language} {kind}: scanned {n_files} file(s), {len(findings)} finding(s)"
     ]
+    lines.extend(notes)
     for f in findings[:50]:
         loc = f"{f.file}:{f.line}" if f.file else ""
         lines.append(f"  [{f.severity.value}] {loc}  {f.message}")

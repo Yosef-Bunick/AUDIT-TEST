@@ -58,17 +58,6 @@ def _build_parent_map(root_node):
     return parents
 
 
-def _ancestor_of_type(node, node_type, parents, max_depth=10):
-    """Check if node has an ancestor of given type within max_depth."""
-    for _ in range(max_depth):
-        node = parents.get(_node_key(node))
-        if node is None:
-            return False
-        if node.type == node_type:
-            return True
-    return False
-
-
 def _has_catch_in_chain(node, parents, src, max_depth=15) -> bool:
     """Walk up from a call_expression to check if .catch() appears anywhere
     in the method chain, traversing through member_expression and

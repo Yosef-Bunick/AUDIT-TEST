@@ -201,9 +201,8 @@ def _check_hardcoded_constant(root, sources):
 
 def _check_god_function(root, sources):
     """DG1-equivalent: functions over 120 lines."""
-    findings = []
+    findings: list[Finding] = []
     for path, text in sources.items():
-        lines = text.split("\n")
         tree = _PARSER.parse(text.encode())
         src = text.encode()
         for node in _walk(tree.root_node):

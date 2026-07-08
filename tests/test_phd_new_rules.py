@@ -1,8 +1,13 @@
+# ruff: noqa: S101, S603
 """Tests for new Python PhD rules: C7, C8, C9, SEC4, B4, G3, T7, F5."""
 
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _run_phd(tmp_path, code, extra_files=None):
@@ -25,8 +30,8 @@ def _run_phd(tmp_path, code, extra_files=None):
         capture_output=True,
         text=True,
         timeout=30,
-        env={**__import__("os").environ, "PYTHONPATH": "/mnt/c/AI/audit/src"},
-        cwd="/mnt/c/AI/audit",
+        env={**os.environ, "PYTHONPATH": str(_REPO_ROOT / "src")},
+        cwd=str(_REPO_ROOT),
     )
     return json.loads(r.stdout)
 

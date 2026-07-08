@@ -1,5 +1,6 @@
 """Scala adapter — `scalac` syntax check."""
 
+import tempfile
 from pathlib import Path
 
 from audit_code.adapters.base import LanguageAdapter, run_tool, which
@@ -17,8 +18,9 @@ class ScalaAdapter(LanguageAdapter):
         if not scalac:
             return cls.skip("scalac not found", True)
         paths = [str(f) for f in files[:200]]
+        outdir = tempfile.mkdtemp(prefix="sc_")
         rc, out, err = run_tool(
-            [scalac, "-Ystop-after:parser", "-d", "/tmp/sc_out"] + paths,
+            [scalac, "-Ystop-after:parser", "-d", outdir] + paths,
             root,
             timeout=120,
         )

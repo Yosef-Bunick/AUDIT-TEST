@@ -54,6 +54,20 @@ def test_build_graph_has_edges():
     # cli.py should have imports
     cli = g.get("src/audit_code/cli.py", set())
     assert len(cli) > 5, f"cli.py has {len(cli)} imports, expected >5"
+    # Edge targets must be root-relative posix keys, same style as node keys
+    assert "src/audit_code/runner.py" in cli
+    for tgt in cli:
+        assert "\\" not in tgt and not Path(tgt).is_absolute(), tgt
+
+
+def test_python_edges_are_root_relative(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "a.py").write_text("import pkg\n", encoding="utf-8")
+    g, edge_types = build_graph(tmp_path)
+    assert g.get("a.py") == {"pkg/__init__.py"}
+    assert edge_types[("a.py", "pkg/__init__.py")] == "import"
 
 
 def test_trace_downstream():
@@ -70,8 +84,9 @@ def test_trace_upstream():
     node = "src/audit_code/cli.py"
     up = trace_upstream(g, node, 1)
     assert node in up
-    # cli.py is imported by __main__.py and tests
-    assert len(up) >= 1, f"only {len(up)} upstream nodes"
+    # cli.py is imported by __main__.py — the edge must actually be followed,
+    # not just satisfied by the start node counting itself.
+    assert "src/audit_code/__main__.py" in up, f"upstream missing __main__: {up}"
 
 
 def test_format_tree_shows_node():

@@ -6,6 +6,8 @@ Traces import relationships between modules. Same vybe as scan:
 Supports Python (ast.parse) and JavaScript/TypeScript (tree-sitter).
 """
 
+import os
+import re
 from pathlib import Path
 
 from audit_code.models import AuditResult, AuditStatus
@@ -236,10 +238,10 @@ def _parse_rust_imports(filepath: Path) -> set[str]:
         return set()
     imports: set[str] = set()
     # use crate::X::Y  |  use super::X  |  use self::X
-    for m in _re.finditer(r"\buse\s+(crate|super|self)::(\S+)", text):
+    for m in re.finditer(r"\buse\s+(crate|super|self)::(\S+)", text):
         imports.add(f"{m.group(1)}::{m.group(2).rstrip(';')}")
     # mod foo;  (inline module declaration — resolves to foo.rs or foo/mod.rs)
-    for m in _re.finditer(r"\bmod\s+(\w+)\s*;", text):
+    for m in re.finditer(r"\bmod\s+(\w+)\s*;", text):
         imports.add(f"mod:{m.group(1)}")
     return imports
 
@@ -297,7 +299,7 @@ def _parse_go_imports(filepath: Path) -> set[str]:
     imports: set[str] = set()
     # import "pkg/path"  (single line)
     # import ( "a" ; "b" )  (multi-line block)
-    for m in _re.finditer(r'"([^"]+)"', text):
+    for m in re.finditer(r'"([^"]+)"', text):
         pkg = m.group(1)
         # Skip stdlib (no dots in first segment) and external URLs
         if "." not in pkg.split("/")[0] and "/" in pkg:
@@ -348,7 +350,7 @@ def _parse_java_imports(filepath: Path) -> set[str]:
     except OSError:
         return set()
     imports: set[str] = set()
-    for m in _re.finditer(r"^import\s+((?:static\s+)?[\w.]+)", text, _re.MULTILINE):
+    for m in re.finditer(r"^import\s+((?:static\s+)?[\w.]+)", text, re.MULTILINE):
         imports.add(m.group(1))
     return imports
 
@@ -379,9 +381,6 @@ def _resolve_java_local(base_dir: Path, spec: str, target_root: Path) -> str | N
 _CSHARP_EXTS = frozenset({".cs"})
 
 
-import os as _os
-
-
 def _parse_csharp_imports(filepath: Path) -> set[str]:
     """Extract using directives from a .cs file."""
     try:
@@ -389,7 +388,7 @@ def _parse_csharp_imports(filepath: Path) -> set[str]:
     except OSError:
         return set()
     imports: set[str] = set()
-    for m in _re.finditer(r"^using\s+((?:static\s+)?[\w.]+)", text, _re.MULTILINE):
+    for m in re.finditer(r"^using\s+((?:static\s+)?[\w.]+)", text, re.MULTILINE):
         imports.add(m.group(1))
     return imports
 
@@ -399,7 +398,7 @@ def _resolve_csharp_local(base_dir: Path, spec: str, target_root: Path) -> str |
     ns = spec.replace("static ", "", 1)
     name = ns.split(".")[-1]  # last segment is usually the class name
     # Search for matching .cs file
-    for dirpath, dirnames, filenames in _os.walk(_os.fspath(target_root)):
+    for dirpath, dirnames, filenames in os.walk(os.fspath(target_root)):
         dirnames[:] = [
             d for d in dirnames if d not in {".git", "bin", "obj", "node_modules"}
         ]
@@ -421,14 +420,14 @@ def _parse_swift_imports(filepath: Path) -> set[str]:
     except OSError:
         return set()
     imports: set[str] = set()
-    for m in _re.finditer(r"^import\s+(\w+)", text, _re.MULTILINE):
+    for m in re.finditer(r"^import\s+(\w+)", text, re.MULTILINE):
         imports.add(m.group(1))
     return imports
 
 
 def _resolve_swift_local(base_dir: Path, spec: str, target_root: Path) -> str | None:
     """Resolve a Swift module name to a .swift file by name matching."""
-    for dirpath, dirnames, filenames in _os.walk(_os.fspath(target_root)):
+    for dirpath, dirnames, filenames in os.walk(os.fspath(target_root)):
         dirnames[:] = [
             d for d in dirnames if d not in {".git", "build", ".build", "DerivedData"}
         ]
@@ -451,12 +450,12 @@ def _parse_php_imports(filepath: Path) -> set[str]:
         return set()
     imports: set[str] = set()
     # require 'file.php', include 'file.php', require_once, include_once
-    for m in _re.finditer(r"(?:require|include)(?:_once)?\s*['\"]([^'\"]+)['\"]", text):
+    for m in re.finditer(r"(?:require|include)(?:_once)?\s*['\"]([^'\"]+)['\"]", text):
         p = m.group(1)
         if p.endswith(".php") and "/" in p:
             imports.add(p)
     # use Namespace\Class;
-    for m in _re.finditer(r"^use\s+([\w\\]+)", text, _re.MULTILINE):
+    for m in re.finditer(r"^use\s+([\w\\]+)", text, re.MULTILINE):
         imports.add(m.group(1))
     return imports
 
@@ -471,7 +470,7 @@ def _resolve_php_local(base_dir: Path, spec: str, target_root: Path) -> str | No
     # use Namespace\Class → Namespace/Class.php
     if "\\" in spec:
         parts = spec.replace("\\", "/").split("/")
-        for dirpath, dirnames, filenames in _os.walk(_os.fspath(target_root)):
+        for dirpath, dirnames, filenames in os.walk(os.fspath(target_root)):
             dirnames[:] = [
                 d for d in dirnames if d not in {".git", "vendor", "node_modules"}
             ]
@@ -493,7 +492,7 @@ def _parse_c_imports(filepath: Path) -> set[str]:
     except OSError:
         return set()
     imports: set[str] = set()
-    for m in _re.finditer(r'#include\s+"([^"]+)"', text):
+    for m in re.finditer(r'#include\s+"([^"]+)"', text):
         imports.add(m.group(1))
     return imports
 
@@ -539,7 +538,6 @@ _ALL_GRAPH_EXTS = set(_IMPORT_EXTRACTORS)
 
 # ── cross-language edge detection ─────────────────────────────────────────
 
-import re as _re
 
 # (pattern, edge_type, target_language_hint)
 _CROSS_PATTERNS: list[tuple[str, str, str]] = [
@@ -627,7 +625,7 @@ def _add_cross_language_edges(
             if ext in cross_exts:
                 full = Path(dirpath) / fname
                 try:
-                    rp = str(full.relative_to(root))
+                    rp = full.relative_to(root).as_posix()
                 except ValueError:
                     continue
                 if rp not in graph:
@@ -644,7 +642,7 @@ def _add_cross_language_edges(
                 continue
             full = Path(dirpath) / fname
             try:
-                rel = str(full.relative_to(root))
+                rel = full.relative_to(root).as_posix()
             except ValueError:
                 continue
 
@@ -655,7 +653,7 @@ def _add_cross_language_edges(
                 continue
 
             for pattern, edge_type, hint_lang in _CROSS_PATTERNS:
-                for m in _re.finditer(pattern, text):
+                for m in re.finditer(pattern, text):
                     found = None
                     if m.groups():
                         raw_cmd = m.group(1)
@@ -703,7 +701,11 @@ def build_graph(
     edge_types: dict[tuple[str, str], str] = {}
     skip = {".venv", "venv", "__pycache__", ".git", "node_modules", "dist", "build"}
 
-    for dirpath, dirnames, filenames in _os.walk(_os.fspath(target_root)):
+    # Resolvers return absolute paths; an absolute root keeps relative_to valid
+    # even when the caller passes a relative --path.
+    target_root = Path(target_root).resolve()
+
+    for dirpath, dirnames, filenames in os.walk(os.fspath(target_root)):
         dirnames[:] = [d for d in dirnames if d not in skip]
         for fname in filenames:
             ext = Path(fname).suffix
@@ -712,7 +714,7 @@ def build_graph(
             full = Path(dirpath) / fname
 
             try:
-                rel = str(full.relative_to(target_root))
+                rel = full.relative_to(target_root).as_posix()
             except ValueError:
                 continue
 
@@ -721,7 +723,12 @@ def build_graph(
                 continue
 
             if ext == ".py":
-                resolved = extractor(full)
+                resolved = set()
+                for found in extractor(full):
+                    try:
+                        resolved.add(Path(found).relative_to(target_root).as_posix())
+                    except ValueError:
+                        continue
             elif ext in _JS_EXTENSIONS:
                 raw_specs = extractor(full)
                 resolved = set()
@@ -730,7 +737,9 @@ def build_graph(
                     found = _resolve_js_local(base, spec)
                     if found:
                         try:
-                            resolved.add(str(Path(found).relative_to(target_root)))
+                            resolved.add(
+                                Path(found).relative_to(target_root).as_posix()
+                            )
                         except ValueError:
                             continue
             elif ext == ".rs":
@@ -741,7 +750,9 @@ def build_graph(
                     found = _resolve_rust_local(base, spec)
                     if found:
                         try:
-                            resolved.add(str(Path(found).relative_to(target_root)))
+                            resolved.add(
+                                Path(found).relative_to(target_root).as_posix()
+                            )
                         except ValueError:
                             continue
             elif ext == ".go":
@@ -752,7 +763,9 @@ def build_graph(
                     found = _resolve_go_local(base, spec)
                     if found:
                         try:
-                            resolved.add(str(Path(found).relative_to(target_root)))
+                            resolved.add(
+                                Path(found).relative_to(target_root).as_posix()
+                            )
                         except ValueError:
                             continue
             elif ext == ".java":
@@ -763,7 +776,9 @@ def build_graph(
                     found = _resolve_java_local(base, spec, target_root)
                     if found:
                         try:
-                            resolved.add(str(Path(found).relative_to(target_root)))
+                            resolved.add(
+                                Path(found).relative_to(target_root).as_posix()
+                            )
                         except ValueError:
                             continue
             elif ext == ".cs":
@@ -774,7 +789,9 @@ def build_graph(
                     found = _resolve_csharp_local(base, spec, target_root)
                     if found:
                         try:
-                            resolved.add(str(Path(found).relative_to(target_root)))
+                            resolved.add(
+                                Path(found).relative_to(target_root).as_posix()
+                            )
                         except ValueError:
                             continue
             elif ext in (".kt", ".kts"):
@@ -805,7 +822,9 @@ def build_graph(
                                 break
                     if found:
                         try:
-                            resolved.add(str(Path(found).relative_to(target_root)))
+                            resolved.add(
+                                Path(found).relative_to(target_root).as_posix()
+                            )
                         except ValueError:
                             continue
             elif ext == ".swift":
@@ -816,7 +835,9 @@ def build_graph(
                     found = _resolve_swift_local(base, spec, target_root)
                     if found:
                         try:
-                            resolved.add(str(Path(found).relative_to(target_root)))
+                            resolved.add(
+                                Path(found).relative_to(target_root).as_posix()
+                            )
                         except ValueError:
                             continue
             elif ext in (".php", ".phtml"):
@@ -827,7 +848,9 @@ def build_graph(
                     found = _resolve_php_local(base, spec, target_root)
                     if found:
                         try:
-                            resolved.add(str(Path(found).relative_to(target_root)))
+                            resolved.add(
+                                Path(found).relative_to(target_root).as_posix()
+                            )
                         except ValueError:
                             continue
             elif ext in _CEXTS:
@@ -838,7 +861,9 @@ def build_graph(
                     found = _resolve_c_local(base, spec)
                     if found:
                         try:
-                            resolved.add(str(Path(found).relative_to(target_root)))
+                            resolved.add(
+                                Path(found).relative_to(target_root).as_posix()
+                            )
                         except ValueError:
                             continue
             else:

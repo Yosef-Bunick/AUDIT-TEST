@@ -27,6 +27,10 @@ dependencies = [
     "tree-sitter-rust>=0.22",
     "tree-sitter-go>=0.22",
     "tree-sitter-java>=0.22",
+    "tree-sitter-c-sharp>=0.23",
+    "tree-sitter-kotlin>=1.0",
+    "tree-sitter-swift>=0.7",
+    "tree-sitter-php>=0.23",
 ]
 
 [project.optional-dependencies]
