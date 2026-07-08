@@ -332,7 +332,55 @@ def index_refs(trees):
     return refs
 
 
+def _collect_decorator_wired(defs):
+    """Find functions wired via FastAPI `@router.*` or Alembic upgrade/downgrade."""
+    import ast
+
+    # Build {filepath: {def_name}} mapping
+    file_defs: dict[str, set[str]] = {}
+    for name, sites in defs.items():
+        for p, qualname, lineno, kind in sites:
+            file_defs.setdefault(str(p), set()).add(name)
+
+    wired: set[str] = set()
+    for fpath, fnames in file_defs.items():
+        try:
+            tree = ast.parse(Path(fpath).read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name not in fnames:
+                continue
+            for dec in node.decorator_list:
+                if isinstance(dec, ast.Attribute):
+                    obj = dec.value
+                    if isinstance(obj, ast.Name) and obj.id == "router":
+                        wired.add(node.name)
+                        break
+                elif isinstance(dec, ast.Call):
+                    inner = dec.func
+                    if isinstance(inner, ast.Attribute):
+                        obj = inner.value
+                        if isinstance(obj, ast.Name) and obj.id == "router":
+                            wired.add(node.name)
+                            break
+                elif isinstance(dec, ast.Name):
+                    if dec.id in ("upgrade", "downgrade"):
+                        wired.add(node.name)
+                        break
+    return wired
+
+
 def classify_defs(defs, refs_prod, refs_test, prod_files):
+    # Mark decorator-wired FastAPI route functions + Alembic migrations as alive
+    DECORATOR_WIRED = _collect_decorator_wired(defs)
+    for name in DECORATOR_WIRED:
+        if name not in refs_prod:
+            refs_prod[name] = set()
+        refs_prod[name].add("__decorator__")
+
     dead, test_only = [], []
     for name, sites in defs.items():
         if name.startswith("__") or name in NAME_SKIP:

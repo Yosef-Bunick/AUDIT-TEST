@@ -245,6 +245,12 @@ _JS_TIMER_STRING = _rule(
     "setTimeout/setInterval with string argument — eval-like code execution",
     r"(?:setTimeout|setInterval)\s*\(\s*['\"]",
 )
+_HARDCODED_URL = _rule(
+    "poly-js-hardcoded-url",
+    Severity.HIGH,
+    "hardcoded https:// URL in JS bundle — use env var instead",
+    r"https?://[a-zA-Z0-9.-]+(?:onrender|vercel|heroku|netlify|fly\.dev)\.\w{2,}/[^\s\"']*",
+)
 
 
 # ── Per-language specs ──
@@ -269,6 +275,7 @@ _JS = LangSpec(
         _JS_XSS_DOCUMENT_WRITE,
         _JS_FETCH_NO_SIGNAL,
         _JS_TIMER_STRING,
+        _HARDCODED_URL,
     ),
     runtime_rules=(_CONSOLE_LOG, _UNBOUNDED),
 )
@@ -794,6 +801,13 @@ except ModuleNotFoundError as exc:
     _ast_skip_or_raise(exc, "php")
 else:
     _AST_CHECKS["php"] = _php_ast_run
+
+try:
+    from audit_code.adapters.cpp.phd import run as _cpp_ast_run
+
+    _AST_CHECKS["cpp"] = _cpp_ast_run
+except ImportError as exc:
+    _ast_skip_or_raise(exc, "cpp")
 
 # Extension → canonical language, for single-walk detection.
 _EXT_LANG: dict[str, str] = {}

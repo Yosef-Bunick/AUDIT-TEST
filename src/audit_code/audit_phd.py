@@ -892,6 +892,43 @@ def main():
                     break
                 seen_pairs.add((a, b))
 
+        # R9 - broken structured logging (log.info(msg, key=val))
+        LOG_LEVELS = frozenset(
+            ("debug", "info", "warning", "warn", "error", "critical", "exception")
+        )
+        VALID_KWARGS = frozenset(("exc_info", "stack_info", "stacklevel", "extra"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            cn = call_name(node)
+            if cn not in LOG_LEVELS:
+                continue
+            rcv = receiver_name(node)
+            if not rcv or rcv not in ("log", "logger", "LOGGER", "_log"):
+                if not rcv:
+                    continue
+            for kw in node.keywords:
+                if kw.arg not in VALID_KWARGS:
+                    sink.add(
+                        "R9",
+                        f,
+                        node.lineno,
+                        f"log.{cn}(..., {kw.arg}=) — {kw.arg} is not a valid logging keyword; "
+                        f"this will raise TypeError at runtime. Use extra={{{kw.arg}: ...}}",
+                    )
+                    break
+
+        # SEC5 - SQLite without FK enforcement
+        has_sqlite = "sqlite" in txt.lower()
+        has_fk = "PRAGMA foreign_keys" in txt or "foreign_keys" in txt.lower()
+        if has_sqlite and not has_fk and "create_engine" in txt:
+            sink.add(
+                "SEC5",
+                f,
+                1,
+                "SQLite engine without PRAGMA foreign_keys=ON — FK constraints silently ignored",
+            )
+
         # F3 - import-time side effects (main-guard excluded)
         def top_stmts(body):
             for st in body:
@@ -1644,6 +1681,8 @@ def main():
         ("B4", "MEDIUM", "tempfile.mktemp/os.tempnam — race-prone (TOCTOU)"),
         ("F1", "HIGH", "locks defined but never acquired (Dim 3)"),
         ("F5", "MEDIUM", "lock ordering inconsistency (potential deadlock)"),
+        ("R9", "HIGH", "broken structured logging — invalid kwargs to log.info()"),
+        ("SEC5", "HIGH", "SQLite engine without PRAGMA foreign_keys=ON"),
         ("P1", "HIGH", "imports inside loop bodies (Phase 4)"),
         ("E1", "HIGH", "prompts frozen at import (engine regression)"),
         ("E2", "HIGH", "hook prompts missing {task} (engine regression)"),

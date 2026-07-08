@@ -93,8 +93,123 @@ All clear.
 | 7 | **JS AST**: J1.9 setState-in-render | ~40 LOC | Control-flow within component |
 | 8 | **JS AST**: J2.1 prop drilling, J2.2 MUI barrel | ~80 LOC each | Cross-file component tree |
 | 9 | Megalinter integration | — | considering |
-| 10 | Runtime audit expansion | — | memory, GPU, disk watchdogs |
-| 11 | Decorator registration detection | — | FastAPI `@router` patterns |
+| 11 | **Runtime: hardcoded URL detection** | not started | Flag `https://...` in JS bundles — catches env drift, credential leaks |
+| 12 | **Wiring: FastAPI decorator detection** | ~80 LOC | `@router.get/post` functions flagged as dead — wiring only sees direct calls |
+| 13 | **Python: broken structured logging** | ~25 LOC | `log.info(msg, key=val)` — kwargs not `extra=/exc_info=` crashes with TypeError |
+| 14 | **Python: SQLite FK not enabled** | ~15 LOC | `create_engine(sqlite://...)` without `PRAGMA foreign_keys=ON` — silent data corruption |
+
+## Rule candidates from external checklists
+
+Source: [awesome-skills/code-review-skill](https://github.com/awesome-skills/code-review-skill)
+> 33 rule candidates across 11 languages. Rules already in audit-code marked ✓.
+
+### React/JS (highest value)
+
+| Rule | What | Bug class |
+|---|---|---|
+| Hooks in conditional | `if { useState() }` → crashes | Runtime crash |
+| `useEffect` missing cleanup | No return function → leaks subs/timers | Memory leak |
+| Component inside component | Nested `function Foo()` → re-mounts every render | Perf bug |
+| `parseInt(x)` without radix | `parseInt('09')` → 0 in old engines | Silent wrong value |
+| `==` instead of `===` | Type coercion → `'' == 0` is true | Logic bug |
+| Array index as key | `key={i}` → React reuses wrong DOM on sort | UI corruption | ✓ partial (key missing detected) |
+| Missing `key` prop | React can't track list items | UI corruption | ✓ js-ast-map-missing-key |
+
+### FastAPI/Python
+
+| Rule | What | Bug class |
+|---|---|---|
+| `Depends` yield without `async with` | Session leaks if route raises | Connection leak |
+| `response_model` missing on route | Exposes DB fields to client | Data leak |
+| Route does real work (not Depends) | Inline DB/validation in route → untestable | Architecture |
+| `response_model` uses Pydantic v1 syntax | `class Config` for v2 model → silent failure | Version drift |
+
+### TypeScript
+
+| Rule | What | Bug class |
+|---|---|---|
+| `any` type usage | Bypasses type checker → runtime surprise | Type safety |
+| Missing `await` on async call | Returns Promise, not value | Logic bug |
+| `this` in non-arrow callback | Context lost → `this.foo` is undefined | Runtime crash |
+
+### Rust
+
+| Rule | What | Bug class |
+|---|---|---|
+| `unwrap()` without context | Panics with no message → un-debuggable | Crash | ✓ rs-ast-unwrap |
+| `clone()` in hot loop | Allocates on every iteration | Perf bug |
+| Missing `#[must_use]` on Result return | Caller ignores error → silent failure | Logic bug |
+
+### Go
+
+| Rule | What | Bug class |
+|---|---|---|
+| `defer` in loop | Resources accumulate | Resource leak | ✓ go-ast-defer-loop |
+| `interface{}` instead of `any` | Pre-1.18 idiom | Type safety |
+
+### Java
+
+| Rule | What | Bug class |
+|---|---|---|
+| `Date`/`Calendar`/`SimpleDateFormat` | Deprecated, thread-unsafe | Correctness |
+| `Optional` as field or parameter | Only for return values | Anti-pattern |
+| `@Autowired` field injection | Use constructor injection | Architecture |
+
+### C#
+
+| Rule | What | Bug class |
+|---|---|---|
+| `Task.Wait()` / `.Result` / `async void` | Deadlocks, unobserved exceptions | Runtime crash |
+| Missing `CancellationToken` | Can't cancel long ops | Resource leak |
+| Sync/async mixed access | Deadlocks in ASP.NET | Runtime crash |
+
+### C/C++
+
+| Rule | What | Bug class |
+|---|---|---|
+| Raw `new`/`delete` in business logic | Use smart pointers | Memory leak |
+| No `const` on pointer params | Mutates caller data silently | Correctness |
+| Unchecked allocation size | `malloc(n * size)` overflow | Security |
+
+### Kotlin
+
+| Rule | What | Bug class |
+|---|---|---|
+| `GlobalScope` usage | Leaked coroutines | Resource leak |
+| `Job()` constructor | Breaks parent-child relationship | Correctness |
+| `CPU` work on `Dispatchers.Main` | UI freeze | Perf bug |
+
+### Swift
+
+| Rule | What | Bug class |
+|---|---|---|
+| `!` / `try!` force unwrap | Crashes on nil/error | Runtime crash | ✓ sw-ast-force-try, sw-ast-force-cast |
+| Closure without `[weak self]` | Retain cycle → memory leak | Memory leak |
+| `Task {}` fire-and-forget | Leaked, never cancelled | Resource leak |
+
+### PHP
+
+| Rule | What | Bug class |
+|---|---|---|
+| Missing `strict_types=1` | Type coercion bugs | Correctness |
+| `password_hash()` not used | Plaintext or weak hashing | Security |
+| SQL without parameterized queries | SQL injection | Security |
+
+### Vue / Svelte
+
+| Rule | What | Bug class |
+|---|---|---|
+| Destructuring `reactive` object | Loses reactivity → stale UI | UI corruption |
+| `computed` with side effects | Mutation during render → infinite loop | Runtime crash |
+| `$effect` without cleanup | Subscription/timer leak | Memory leak |
+
+### General (all languages)
+
+| Rule | What | Bug class |
+|---|---|---|
+| Integer overflow in allocation | `malloc(n * size)` with no overflow check | Security |
+| `==` on floats | `0.1 + 0.2 == 0.3` → False | Logic bug | ✓ C9 |
+| Dead code after `return`/`throw` | Unreachable statements confuse readers | Maintainability |
 
 ---
 

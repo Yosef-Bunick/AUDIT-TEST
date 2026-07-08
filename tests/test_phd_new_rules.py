@@ -209,3 +209,16 @@ def test_f5_skips_single_lock(tmp_path):
     code = "la = None\ndef f():\n with la: pass\n"
     data = _run_phd(tmp_path, code)
     assert not data.get("F5"), "single lock should skip"
+
+
+# R9: broken structured logging
+def test_r9_flags_invalid_logging_kwargs(tmp_path):
+    data = _run_phd(tmp_path, "log=None\ndef f(): log.info('msg', entry_id=42)\n")
+    assert data.get("R9"), "log.info with invalid kwarg should be flagged"
+
+
+def test_r9_skips_valid_kwargs(tmp_path):
+    data = _run_phd(
+        tmp_path, "log=None\ndef f(): log.info('msg', extra={'key': 'val'})\n"
+    )
+    assert not data.get("R9"), "log.info with extra= should skip"
