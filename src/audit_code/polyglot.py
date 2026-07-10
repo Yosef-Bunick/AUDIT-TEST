@@ -251,6 +251,42 @@ _HARDCODED_URL = _rule(
     "hardcoded https:// URL in JS bundle — use env var instead",
     r"https?://[a-zA-Z0-9.-]+(?:onrender|vercel|heroku|netlify|fly\.dev)\.\w{2,}/[^\s\"']*",
 )
+_JS_HOOK_CONDITIONAL = _rule(
+    "poly-js-hook-conditional",
+    Severity.MEDIUM,
+    "React hook called inside a conditional — hooks must run in the same order every render",
+    r"\bif\s*\([^)\n]*\)\s*\{?[^\n{}]*\buse[A-Z]\w*\s*\(",
+)
+_JS_PARSEINT_NO_RADIX = _rule(
+    "poly-js-parseint-no-radix",
+    Severity.MEDIUM,
+    "parseInt() without a radix — '09' parses as 0 in some engines; pass 10",
+    r"\bparseInt\s*\(\s*[^,()]+\)",
+)
+_JS_LOOSE_EQ = _rule(
+    "poly-js-loose-eq",
+    Severity.MEDIUM,
+    "== type-coercing comparison ('' == 0 is true) — use ===",
+    r"(?<![=!<>+\-*/%&|^])==(?!=)(?!\s*(?:null|undefined)\b)",
+)
+_TS_ANY = _rule(
+    "poly-ts-any",
+    Severity.INFO,
+    "explicit `any` bypasses the type checker",
+    r":\s*any\b|\bas\s+any\b",
+)
+_TS_ENUM_NUMERIC = _rule(
+    "poly-ts-enum-numeric",
+    Severity.INFO,
+    "numeric enum — values serialize as numbers; prefer a string enum or union type",
+    r"(?s)\benum\s+\w+\s*\{[^}\"']*\}",
+)
+_JS_REACTIVE_DESTRUCTURE = _rule(
+    "poly-js-reactive-destructure",
+    Severity.MEDIUM,
+    "destructuring a reactive() object loses reactivity — use toRefs()",
+    r"(?:const|let|var)\s*\{[^}\n]*\}\s*=\s*reactive\s*\(",
+)
 
 
 # ── Per-language specs ──
@@ -276,6 +312,12 @@ _JS = LangSpec(
         _JS_FETCH_NO_SIGNAL,
         _JS_TIMER_STRING,
         _HARDCODED_URL,
+        _JS_HOOK_CONDITIONAL,
+        _JS_PARSEINT_NO_RADIX,
+        _JS_LOOSE_EQ,
+        _TS_ANY,
+        _TS_ENUM_NUMERIC,
+        _JS_REACTIVE_DESTRUCTURE,
     ),
     runtime_rules=(_CONSOLE_LOG, _UNBOUNDED),
 )
@@ -297,8 +339,29 @@ _GO = LangSpec(
         ),
         _DEFER_IN_LOOP,
         _GO_GOTO,
+        _rule(
+            "poly-go-mutex-value",
+            Severity.MEDIUM,
+            "sync.Mutex/WaitGroup passed by value — the copy is a separate lock",
+            r"func\s[^\n{]*\([^)]*[^*\s(][ \t]+sync\.(?:Mutex|RWMutex|WaitGroup)\s*[,)]",
+        ),
+        _rule(
+            "poly-go-timeafter-select-loop",
+            Severity.MEDIUM,
+            "time.After in a select loop — a new timer per iteration, "
+            "not GC'd until it fires",
+            r"(?s)\bfor\b[^\n]*\{.{0,400}?\bselect\s*\{.{0,300}?<-\s*time\.After\s*\(",
+        ),
     ),
-    runtime_rules=(_UNBOUNDED,),
+    runtime_rules=(
+        _UNBOUNDED,
+        _rule(
+            "poly-go-empty-interface",
+            Severity.INFO,
+            "interface{} — use `any` (Go 1.18+)",
+            r"\binterface\s*\{\s*\}",
+        ),
+    ),
 )
 
 _RUST = LangSpec(
@@ -319,8 +382,31 @@ _RUST = LangSpec(
             r"\b(panic|unreachable|todo|unimplemented)\s*!\s*\(",
         ),
         _UNSAFE_RUST,
+        _rule(
+            "poly-rust-expect-empty",
+            Severity.MEDIUM,
+            '.expect("") with an empty message — panics with no context',
+            r'\.expect\s*\(\s*""\s*\)',
+        ),
+        _rule(
+            "poly-rust-async-blocking",
+            Severity.MEDIUM,
+            "blocking call inside async fn — blocks the executor; "
+            "use the async equivalent or spawn_blocking",
+            r"(?s)\basync\s+fn\b[^{;]*\{.{0,600}?"
+            r"\b(?:std::fs::\w+|thread::sleep|std::net::TcpStream::connect"
+            r"|reqwest::blocking)",
+        ),
     ),
-    runtime_rules=(_UNBOUNDED,),
+    runtime_rules=(
+        _UNBOUNDED,
+        _rule(
+            "poly-rust-clone-in-loop",
+            Severity.INFO,
+            ".clone() inside a loop — allocates every iteration; hoist or borrow",
+            r"(?s)\bfor\s[^{;\n]*\{[^{}]{0,300}?\.clone\s*\(",
+        ),
+    ),
 )
 
 _JAVA = LangSpec(
@@ -333,7 +419,38 @@ _JAVA = LangSpec(
             r"(?P<name>[A-Za-z_]\w*)\s*\("
         ),
     ),
-    phd_rules=(_EMPTY_CATCH, _BROAD_CATCH_JVM, _THREAD_SLEEP, _HARD_EXIT),
+    phd_rules=(
+        _EMPTY_CATCH,
+        _BROAD_CATCH_JVM,
+        _THREAD_SLEEP,
+        _HARD_EXIT,
+        _rule(
+            "poly-java-string-eq",
+            Severity.MEDIUM,
+            "== compares String references, not values — use .equals()",
+            r'"\s*[=!]=(?!=)|(?<![=!<>])[=!]=\s*"',
+        ),
+        _rule(
+            "poly-java-legacy-date",
+            Severity.MEDIUM,
+            "legacy java.util date API — thread-unsafe; use java.time",
+            r"\bnew\s+(?:Date|SimpleDateFormat|GregorianCalendar)\s*\("
+            r"|\bCalendar\.getInstance\s*\(",
+        ),
+        _rule(
+            "poly-java-optional-field",
+            Severity.MEDIUM,
+            "Optional as a field — Optional is for return values only",
+            r"(?:private|protected|public)\s+(?:static\s+)?(?:final\s+)?"
+            r"Optional<[^>\n]*>\s+\w+\s*[=;]",
+        ),
+        _rule(
+            "poly-java-field-injection",
+            Severity.MEDIUM,
+            "@Autowired field injection — prefer constructor injection",
+            r"@(?:Autowired|Inject)\b\s*(?:\r?\n\s*)?(?:private|protected|public)\b",
+        ),
+    ),
     runtime_rules=(
         _rule(
             "poly-debug-leftover",
@@ -354,7 +471,33 @@ _CSHARP = LangSpec(
             r"(?P<name>[A-Za-z_]\w*)\s*\("
         ),
     ),
-    phd_rules=(_EMPTY_CATCH, _BROAD_CATCH_JVM, _THREAD_SLEEP, _HARD_EXIT),
+    phd_rules=(
+        _EMPTY_CATCH,
+        _BROAD_CATCH_JVM,
+        _THREAD_SLEEP,
+        _HARD_EXIT,
+        _rule(
+            "poly-cs-blocking-async",
+            Severity.MEDIUM,
+            ".Wait()/.Result on a Task — deadlock risk; await it instead",
+            r"\.Wait\s*\(\s*\)|\.Result\b(?!\s*=[^=])"
+            r"|\.GetAwaiter\s*\(\s*\)\s*\.GetResult\s*\(",
+        ),
+        _rule(
+            "poly-cs-async-void",
+            Severity.MEDIUM,
+            "async void — exceptions are unobservable and crash the process; "
+            "use async Task (UI event handlers excepted)",
+            r"\basync\s+void\s+\w+\s*\(",
+        ),
+        _rule(
+            "poly-cs-throw-ex",
+            Severity.MEDIUM,
+            "throw ex; resets the stack trace — use bare `throw;`",
+            r"(?s)catch\s*\(\s*\w[\w.]*\s+(?P<ex>\w+)\s*\)\s*\{.{0,400}?"
+            r"\bthrow\s+(?P=ex)\s*;",
+        ),
+    ),
     runtime_rules=(
         _rule(
             "poly-debug-leftover",
@@ -391,6 +534,28 @@ _CPP = LangSpec(
             "unsafe C function (gets/strcpy/sprintf) — buffer overflow risk",
             r"\b(gets|strcpy|strcat|sprintf|system)\s*\(",
         ),
+        _rule(
+            "poly-cpp-raw-new",
+            Severity.MEDIUM,
+            "raw `new` — prefer std::make_unique/make_shared (RAII)",
+            r"^(?!.*(?:unique_ptr|shared_ptr|make_unique|make_shared|//))"
+            r"[^\n]*=\s*new\s+[A-Za-z_]",
+            re.M,
+        ),
+        _rule(
+            "poly-c-malloc-unchecked",
+            Severity.MEDIUM,
+            "malloc/calloc result used without a NULL check",
+            r"=\s*(?:malloc|calloc|realloc)\s*\([^;\n]*\)\s*;"
+            r"(?!\s*(?:if\b|assert\b|//|/\*))",
+        ),
+        _rule(
+            "poly-c-alloc-overflow",
+            Severity.INFO,
+            "multiplication inside malloc() can overflow — "
+            "use calloc() or check bounds",
+            r"\bmalloc\s*\([^;{}\n]*\*[^;{}\n]*\)",
+        ),
     ),
     runtime_rules=(_UNBOUNDED,),
 )
@@ -407,6 +572,20 @@ _KOTLIN = LangSpec(
             Severity.MEDIUM,
             "!! not-null assertion can throw NPE",
             r"[\w\)\]]\s*!!",
+        ),
+        _rule(
+            "poly-kotlin-globalscope",
+            Severity.MEDIUM,
+            "GlobalScope coroutines outlive their caller — "
+            "use a lifecycle-bound CoroutineScope",
+            r"\bGlobalScope\s*\.",
+        ),
+        _rule(
+            "poly-kotlin-job-in-builder",
+            Severity.MEDIUM,
+            "Job() passed to a coroutine builder breaks the parent-child "
+            "cancellation chain",
+            r"\b(?:launch|async|withContext)\s*\(\s*(?:Supervisor)?Job\s*\(\s*\)",
         ),
     ),
     runtime_rules=(
@@ -436,6 +615,22 @@ _SWIFT = LangSpec(
             Severity.MEDIUM,
             "fatalError() aborts the process",
             r"\bfatalError\s*\(",
+        ),
+        _rule(
+            "poly-swift-unowned",
+            Severity.INFO,
+            "unowned crashes if the referent is deallocated — "
+            "prefer weak unless lifetime is guaranteed",
+            r"\bunowned\b",
+        ),
+        _rule(
+            "poly-swift-iuo",
+            Severity.MEDIUM,
+            "implicitly unwrapped optional (T!) — hidden force-unwrap "
+            "on every access",
+            r"^(?!.*@IBOutlet)[^\n]*\b(?:var|let)\s+\w+\s*:\s*"
+            r"[A-Z][\w.<>\[\], ]*?!(?=\s*$|\s*=[^=]|\s*\{)",
+            re.M,
         ),
     ),
     runtime_rules=(
@@ -519,6 +714,20 @@ _PHP = LangSpec(
             r"catch\s*\(\s*\\?(Exception|Throwable)\b",
         ),
         _SHELL_EXEC,
+        _rule(
+            "poly-php-loose-eq",
+            Severity.MEDIUM,
+            "== loose comparison ('0' == 0 is true) — use ===",
+            r"(?<![=!<>])==(?!=)(?!\s*null\b)",
+        ),
+        _rule(
+            "poly-php-sql-interp",
+            Severity.HIGH,
+            "variable interpolated/concatenated into an SQL query — "
+            "use prepared statements with bound parameters",
+            r"(?:->\s*(?:query|exec|prepare)\s*\(|\b(?:mysqli|mysql|pg)_query\s*\()"
+            r"(?:[^;\n]*?\"[^\"\n]*\$\w+|[^;\n]*?['\"]\s*\.\s*\$\w+)",
+        ),
     ),
     runtime_rules=(
         _rule(
@@ -701,6 +910,27 @@ _SQL = LangSpec(
     ),
 )
 
+_CSS = LangSpec(
+    language="css",
+    extensions=(".css", ".scss", ".less", ".sass"),
+    # Stylesheets have no call graph; wiring does not apply.
+    supports_wiring=False,
+    runtime_rules=(
+        _rule(
+            "poly-css-important",
+            Severity.INFO,
+            "!important — specificity escalation; prefer a more specific selector",
+            r"!\s*important\b",
+        ),
+        _rule(
+            "poly-css-high-zindex",
+            Severity.INFO,
+            "z-index >= 100 — stacking-context escalation; define a z-scale",
+            r"(?i)z-index\s*:\s*\d{3,}",
+        ),
+    ),
+)
+
 _ALL_SPECS = (
     _JS,
     _GO,
@@ -719,6 +949,7 @@ _ALL_SPECS = (
     _HASKELL,
     _ELIXIR,
     _SQL,
+    _CSS,
 )
 
 # Lookup by language name (plus the common `typescript`/`c` aliases).

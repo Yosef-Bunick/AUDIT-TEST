@@ -164,6 +164,18 @@ def run_suite(
                 ),
             )
 
+    # 2.55 MegaLinter (multi-language meta-linter). Never auto-dispatched —
+    #      Docker-based and slow — so it runs only when named explicitly.
+    if modules is not None and "megalinter" in modules:
+        _run_step(
+            results,
+            "megalinter",
+            "MegaLinter meta-lint",
+            lambda: _run_one_module(
+                target_root, "megalinter", mode, fix, severity, fast
+            ),
+        )
+
     # 2.6 Portable semantic audits (wiring / phd / runtime) for every detected
     #     non-Python language, via the dependency-free polyglot engine. Detection
     #     is by file extension (its own tree walk), so a language needs no full

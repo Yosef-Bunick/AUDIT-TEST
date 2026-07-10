@@ -206,7 +206,504 @@ def _q5_cache_save(root: Path, fingerprint: str, data_file: Path) -> None:
         pass
 
 
-def run(  # needs fix (god function 550+ lines — decompose into sub-audits)
+def _q0_syntax(root, prod, test_files, findings, counts, out):
+    """Q0: every .py file must parse."""
+    bad = []
+    for p in prod + test_files:
+        try:
+            ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError as e:
+            bad.append(f"{p.relative_to(root)}:{e.lineno}  {e.msg}")
+    out.append("=" * 74)
+    out.append(f"Q0 [HIGH] files that do not PARSE - {len(bad)} finding(s)")
+    out.append("=" * 74)
+    counts["HIGH"] += len(bad)
+    for b in bad[:15]:
+        out.append(f"  {b}")
+        findings.append(
+            Finding(rule_id="Q0", severity=Severity.HIGH, message=b, source="quality")
+        )
+    if not bad:
+        out.append("  every .py file parses")
+    out.append("")
+
+
+def _q1_black(target_root, root, fix, findings, counts, out):
+    """Q1: black formatting drift (or apply it with --fix)."""
+    tool = _tool("black", target_root)
+    out.append("=" * 74)
+    out.append("Q1 [MEDIUM] black formatting drift")
+    out.append("=" * 74)
+    if not tool:
+        out.append("  SKIP: black not installed (pip install black)")
+        out.append("")
+        return
+    excl = "|".join(re.escape(d) for d in sorted(EXCLUDE_DIRS))
+    if fix:
+        rc, res = _run(tool.split() + [".", "--extend-exclude", excl], root)
+        changed = len(re.findall(r"^reformatted (.+)$", res, re.MULTILINE))
+        msg = (
+            f"\n  black: {changed} file(s) reformatted"
+            if changed
+            else "\n  black: already clean"
+        )
+        out.append(msg)
+        print(msg)
+        out.append("")
+        return
+    rc, res = _run(tool.split() + ["--check", ".", "--extend-exclude", excl], root)
+    files = re.findall(r"^would reformat (.+)$", res, re.MULTILINE)
+    if rc == 0:
+        out.append("  formatted cleanly")
+    elif not files and rc != 1:
+        out.append(f"  SKIP: black errored: {res.strip()[:200]}")
+    else:
+        counts["MEDIUM"] += len(files)
+        out.append(f"  {len(files)} file(s) would be reformatted (first 15):")
+        for f in files[:15]:
+            out.append(f"    {f}")
+            findings.append(
+                Finding(
+                    rule_id="Q1",
+                    severity=Severity.MEDIUM,
+                    message=f"would reformat {f}",
+                    source="quality",
+                )
+            )
+    out.append("")
+
+
+_RUFF_CHECK_ARGS = [
+    "check",
+    ".",
+    "--select",
+    "E,F,W,I,B,S",
+    "--ignore",
+    "S101,S105,S110,S112,S603,S607,B007,B023,B905,E501",
+]
+
+
+def _q2_record(raw, findings, counts, out, *, verbose_parse_fail):
+    """Parse ruff JSON output and record findings; returns (security, lint)."""
+    try:
+        ruff_findings = json.loads(raw[raw.index("[") : raw.rindex("]") + 1])
+    except (ValueError, json.JSONDecodeError):
+        if verbose_parse_fail:
+            out.append(f"  SKIP: could not parse ruff output: {raw.strip()[:200]}")
+            out.append("")
+        ruff_findings = []
+    sec = [f for f in ruff_findings if str(f.get("code", "")).startswith("S")]
+    lint = [f for f in ruff_findings if not str(f.get("code", "")).startswith("S")]
+    counts["HIGH"] += len(sec)
+    counts["MEDIUM"] += len(lint)
+    for sev, items in ((Severity.HIGH, sec), (Severity.MEDIUM, lint)):
+        for f in items:
+            findings.append(
+                Finding(
+                    rule_id="Q2",
+                    severity=sev,
+                    message=f"{f.get('code')}: {f.get('message', '')}",
+                    file=f.get("filename"),
+                    source="quality",
+                )
+            )
+    return sec, lint
+
+
+def _q2_ruff(target_root, root, fix, findings, counts, out):
+    """Q2: ruff lint — security (S*) reads as HIGH, the rest MEDIUM."""
+    tool = _tool("ruff", target_root)
+    out.append("=" * 74)
+    out.append("Q2 [MEDIUM/HIGH] ruff lint (I=import-order, S=security->HIGH)")
+    out.append("=" * 74)
+    if not tool:
+        out.append("  SKIP: ruff not installed (pip install ruff)")
+        out.append("")
+        return
+    if fix:
+        rc, res = _run(tool.split() + _RUFF_CHECK_ARGS + ["--fix", "--exit-zero"], root)
+        fixed_count = len(re.findall(r"^Fixed \d", res, re.MULTILINE)) or (
+            1 if "fixed" in res.lower() else 0
+        )
+        msg = f"\n  ruff: {fixed_count} issue(s) auto-fixed"
+        out.append(msg)
+        print(msg)
+        # Still report remaining unfixable issues
+        out.append("  re-running check for remaining issues...")
+        rc2, res2 = _run(
+            tool.split()
+            + _RUFF_CHECK_ARGS
+            + ["--output-format", "json", "--exit-zero"],
+            root,
+        )
+        sec, lint = _q2_record(res2, findings, counts, out, verbose_parse_fail=False)
+        out.append(f"  remaining — security (S*): {len(sec)}   lint/style: {len(lint)}")
+        out.append("")
+        return
+    rc, res = _run(
+        tool.split() + _RUFF_CHECK_ARGS + ["--output-format", "json", "--exit-zero"],
+        root,
+    )
+    sec, lint = _q2_record(res, findings, counts, out, verbose_parse_fail=True)
+    out.append(f"  security (S*): {len(sec)}   lint/style: {len(lint)}")
+    out.append("")
+
+
+def _q3_mypy(target_root, root, strict_mypy, findings, counts, out):
+    """Q3: mypy type errors."""
+    tool = _tool("mypy", target_root)
+    out.append("=" * 74)
+    out.append(
+        f"Q3 [MEDIUM] mypy type errors ({'strict' if strict_mypy else 'default'})"
+    )
+    out.append("=" * 74)
+    if not tool:
+        out.append("  SKIP: mypy not installed (pip install mypy)")
+        out.append("")
+        return
+    args = tool.split() + [
+        ".",
+        "--ignore-missing-imports",
+        "--no-error-summary",
+        "--follow-imports=silent",
+        "--exclude",
+        "|".join(sorted(EXCLUDE_DIRS)),
+    ]
+    if strict_mypy:
+        args.append("--strict")
+    rc, res = _run(args, root)
+    errs = [line for line in res.splitlines() if ": error:" in line]
+    if rc in (-1, -2):
+        out.append(f"  SKIP: {res.strip()[:200]}")
+    else:
+        counts["MEDIUM"] += len(errs)
+        if not errs:
+            out.append("  clean")
+        else:
+            out.append(f"  {len(errs)} error(s) (first 10):")
+            for line in errs[:10]:
+                out.append(f"    {line[:120]}")
+                findings.append(
+                    Finding(
+                        rule_id="Q3",
+                        severity=Severity.MEDIUM,
+                        message=line[:200],
+                        source="quality",
+                    )
+                )
+    out.append("")
+
+
+def _q4_cves(target_root, root, findings, counts, out):
+    """Q4: known CVEs in installed dependencies (pip-audit or safety)."""
+    out.append("=" * 74)
+    out.append("Q4 [HIGH] known CVEs in installed dependencies")
+    out.append("=" * 74)
+    cve_found = False
+    for name, cargs in (
+        ("pip-audit", ["--progress-spinner", "off"]),
+        ("safety", ["check", "--output", "text"]),
+    ):
+        tool = _tool(name, target_root)
+        if not tool:
+            continue
+        rc, res = _run(tool.split() + cargs, root, timeout=300)
+        if rc in (-1, -2) or "error" in res.lower()[:200]:
+            continue
+        vulns = len(
+            re.findall(r"(?i)\bvulnerabilit(?:y|ies) found|-> vuln|CVE-\d{4}", res)
+        )
+        if rc == 0 and not vulns:
+            out.append(f"  {name}: no known vulnerabilities")
+            cve_found = True
+            break
+        counts["HIGH"] += max(vulns, 1)
+        cve_found = True
+        out.append(f"  {name}: {max(vulns,1)} vulnerability signal(s)")
+        findings.append(
+            Finding(
+                rule_id="Q4",
+                severity=Severity.HIGH,
+                message=f"{max(vulns,1)} vulnerabilities via {name}",
+                source="quality",
+            )
+        )
+        break
+    if not cve_found:
+        out.append("  SKIP: neither pip-audit nor safety installed")
+    out.append("")
+
+
+def _q5_obtain_coverage(root, tests_dir, pytest_extra, shared_cov, tmp, cache_key, out):
+    """Locate or produce a .coverage data file: the suite audit's shared run,
+    the byte-fingerprint cache, or a fresh run of the whole suite."""
+    rc = 0
+    if shared_cov is not None and shared_cov.exists() and shared_cov.stat().st_size > 0:
+        # The suite audit already ran the whole suite under coverage;
+        # reuse its data instead of a second full test run.
+        out.append("  reusing the suite audit's coverage run (deduped — no second run)")
+        return shared_cov, dict(os.environ, COVERAGE_FILE=str(shared_cov)), rc, False
+    cached = _q5_cache_load(root, cache_key)
+    if cached is not None:
+        # Quality-only mode: no suite ran, but nothing changed since
+        # the last coverage run, so reuse the cached .coverage.
+        out.append(
+            "  reusing cached Q5 coverage (source unchanged since last "
+            "run; set AUDIT_NO_Q5_CACHE=1 to force a rerun)"
+        )
+        return cached, dict(os.environ, COVERAGE_FILE=str(cached)), rc, True
+    data_file = tmp / ".coverage"
+    env = dict(os.environ, COVERAGE_FILE=str(data_file))
+    out.append("  running suite under coverage (this is a full test run)...")
+    rc, _res = _run(
+        [
+            sys.executable,
+            "-m",
+            "coverage",
+            "run",
+            f"--source={root}",
+            "-m",
+            "pytest",
+            str(tests_dir),
+            "-q",
+            "--tb=no",
+            *pytest_extra.split(),
+        ],
+        root,
+        timeout=1800,
+        env=env,
+    )
+    return data_file, env, rc, False
+
+
+def _q5_load_cov_json(root, data_file, json_file, env, out):
+    """Convert .coverage to JSON and load it; None (with a SKIP note) if unusable."""
+    _run(
+        [
+            sys.executable,
+            "-m",
+            "coverage",
+            "json",
+            "-o",
+            str(json_file),
+            "--data-file",
+            str(data_file),
+        ],
+        root,
+        env=env,
+    )
+    try:
+        cov = json.loads(json_file.read_text(encoding="utf-8"))
+    except OSError as e:
+        out.append(f"  SKIP: could not read coverage json ({e})")
+        return None
+    except json.JSONDecodeError as e:
+        out.append(f"  SKIP: coverage json is malformed: {e}")
+        return None
+    if not cov.get("files"):
+        out.append("  SKIP: coverage json has no file data (empty project?)")
+        return None
+    return cov
+
+
+def _q5_flag_never_run(root, tests_dir, cov, findings, counts, out):
+    """Flag defs whose body has no executed line in the coverage data."""
+    executed = {}
+    for fname, fdata in cov.get("files", {}).items():
+        executed[Path(root / fname).resolve()] = set(fdata.get("executed_lines", []))
+
+    prod_files, _ = _py_files(root, tests_dir)
+    total = never = 0
+    flagged = []
+    for p in prod_files:
+        lines = executed.get(p.resolve())
+        for qual, defline, b0, b1 in _def_spans(p):
+            total += 1
+            ran = bool(lines) and any(
+                ln in (lines or set()) for ln in range(b0, b1 + 1)
+            )
+            if not ran:
+                never += 1
+                if (b1 - b0 + 1) >= MIN_FLAG_BODY_LINES:
+                    flagged.append((p.relative_to(root), defline, qual, b1 - b0 + 1))
+    pct = 100.0 * (total - never) / total if total else 100.0
+    counts["MEDIUM"] += len(flagged)
+    out.append(
+        f"  {total} defs scanned; {total - never} executed under tests "
+        f"({pct:.1f}%); {never} never ran ({len(flagged)} flagged)"
+    )
+    shown = 0
+    for rel, def_ln, qual, size in sorted(flagged, key=lambda x: -x[3]):
+        if shown < 25:
+            shown += 1
+            out.append(f"    {str(rel):44} :{def_ln:<5} {qual}  ({size} lines)")
+        findings.append(
+            Finding(
+                rule_id="Q5",
+                severity=Severity.MEDIUM,
+                message=f"{qual} never executed",
+                file=str(rel),
+                line=def_ln,
+                source="quality",
+            )
+        )
+
+
+def _q5_never_executed(
+    root, tests_dir, fast, pytest_extra, shared_cov, findings, counts, out
+):
+    """Q5: defs whose body never executes under the test suite."""
+    out.append("=" * 74)
+    out.append("Q5 [MEDIUM] defs whose body NEVER EXECUTES under the suite")
+    out.append("=" * 74)
+    if fast:
+        out.append("  SKIP: --fast")
+        out.append("")
+        return
+    if importlib.util.find_spec("coverage") is None:
+        out.append("  SKIP: coverage not installed (pip install coverage)")
+        out.append("")
+        return
+    tmp = Path(tempfile.mkdtemp(prefix="audit_q5_"))
+    # Byte-fingerprint of all source + test files: identical bytes ⇒
+    # identical coverage, so a cached .coverage can stand in for a rerun.
+    cache_key = _q5_fingerprint(root, tests_dir, pytest_extra)
+    data_file, env, rc, cache_hit = _q5_obtain_coverage(
+        root, tests_dir, pytest_extra, shared_cov, tmp, cache_key, out
+    )
+    # Persist a freshly produced coverage file (from either the shared
+    # suite run or this mode's own run) so the next quality-only run is
+    # instant while the source is unchanged.
+    if not cache_hit and data_file.exists() and data_file.stat().st_size > 0:
+        _q5_cache_save(root, cache_key, data_file)
+    if not data_file.exists():
+        reason = f"coverage run exit={rc}" if rc != 0 else "no .coverage file produced"
+        out.append(f"  SKIP: {reason} — did pytest crash or have no tests?")
+        out.append("")
+        return
+    cov = _q5_load_cov_json(root, data_file, tmp / "cov.json", env, out)
+    if cov is not None:
+        _q5_flag_never_run(root, tests_dir, cov, findings, counts, out)
+    out.append("")
+
+
+def _q6_docstrings(root, prod, findings, counts, out):
+    """Q6: docstring coverage over public defs and classes."""
+    out.append("=" * 74)
+    out.append(f"Q6 [MEDIUM] docstring coverage (< {DOC_THRESHOLD_PCT}% fails)")
+    out.append("=" * 74)
+    have = need = 0
+    worst: dict = {}
+    for p in prod:
+        try:
+            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = node.name
+                if name.startswith("_") and name != "__init__":
+                    continue
+                need += 1
+                if ast.get_docstring(node):
+                    have += 1
+                else:
+                    worst.setdefault(p.relative_to(root), 0)
+                    worst[p.relative_to(root)] += 1
+    pct = 100.0 * have / need if need else 100.0
+    ok = pct >= DOC_THRESHOLD_PCT
+    if not ok:
+        counts["MEDIUM"] += need - have
+    out.append(
+        f"  {have}/{need} public defs+classes documented ({pct:.1f}%) - "
+        f"{'PASS' if ok else 'FAIL'}"
+    )
+    if not ok:
+        for rel, n in sorted(worst.items(), key=lambda kv: -kv[1])[:10]:
+            out.append(f"    {n:4} undocumented in {rel}")
+            findings.append(
+                Finding(
+                    rule_id="Q6",
+                    severity=Severity.MEDIUM,
+                    message=f"{n} undocumented in {rel}",
+                    source="quality",
+                )
+            )
+    out.append("")
+
+
+def _q7_test_hygiene(root, tests_dir, findings, counts, out):
+    """Q7: flaky-test patterns — time.sleep() and reasonless skips."""
+    out.append("=" * 74)
+    hygiene_findings = []
+    for p in sorted(tests_dir.rglob("*.py")):
+        if any(part in EXCLUDE_DIRS for part in p.parts):
+            continue
+        try:
+            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                fn = node.func
+                if (
+                    isinstance(fn, ast.Attribute)
+                    and fn.attr == "sleep"
+                    and isinstance(fn.value, ast.Name)
+                    and fn.value.id == "time"
+                ):
+                    hygiene_findings.append(
+                        (p, node.lineno, "time.sleep() in a test - flaky AND slow")
+                    )
+                if (
+                    isinstance(fn, ast.Attribute)
+                    and fn.attr == "skip"
+                    and not node.args
+                    and not node.keywords
+                ):
+                    hygiene_findings.append(
+                        (p, node.lineno, "skip with NO reason - rots silently")
+                    )
+    out.append(f"Q7 [MEDIUM] test hygiene - {len(hygiene_findings)} finding(s)")
+    out.append("=" * 74)
+    counts["MEDIUM"] += len(hygiene_findings)
+    for p, h_ln, msg in hygiene_findings[:20]:
+        out.append(f"  {p.relative_to(root)}:{h_ln}  {msg}")
+        findings.append(
+            Finding(
+                rule_id="Q7",
+                severity=Severity.MEDIUM,
+                message=msg,
+                file=str(p.relative_to(root)),
+                line=h_ln,
+                source="quality",
+            )
+        )
+    out.append("")
+
+
+def _q8_mutation(target_root, root, mutation, counts, out):
+    """Q8: mutation testing (opt-in; slow)."""
+    out.append("=" * 74)
+    out.append("Q8 [INFO] mutation testing")
+    out.append("=" * 74)
+    tool = _tool("mutmut", target_root)
+    if not tool:
+        out.append("  SKIP: mutmut not installed")
+    elif not mutation:
+        out.append("  SKIP: pass --mutation to run (slow)")
+    else:
+        rc, res = _run(
+            tool.split() + ["run", "--paths-to-mutate", "."], root, timeout=3600
+        )
+        killed = len(re.findall(r"killed", res, re.IGNORECASE))
+        survived = len(re.findall(r"survived", res, re.IGNORECASE))
+        out.append(f"  killed: {killed}   survived: {survived}")
+        counts["INFO"] += survived
+    out.append("")
+
+
+def run(
     target_root: Path,
     fast: bool = False,
     strict_mypy: bool = False,
@@ -240,560 +737,21 @@ def run(  # needs fix (god function 550+ lines — decompose into sub-audits)
     )
     stdout_lines.append("")
 
-    # Q0: syntax
-    bad = []
-    for p in prod + test_files:
-        try:
-            ast.parse(p.read_text(encoding="utf-8", errors="replace"))
-        except SyntaxError as e:
-            bad.append(f"{p.relative_to(root)}:{e.lineno}  {e.msg}")
-    stdout_lines.append("=" * 74)
-    stdout_lines.append(f"Q0 [HIGH] files that do not PARSE - {len(bad)} finding(s)")
-    stdout_lines.append("=" * 74)
-    counts["HIGH"] += len(bad)
-    for b in bad[:15]:
-        stdout_lines.append(f"  {b}")
-        findings.append(
-            Finding(rule_id="Q0", severity=Severity.HIGH, message=b, source="quality")
-        )
-    if not bad:
-        stdout_lines.append("  every .py file parses")
-    stdout_lines.append("")
+    _q0_syntax(root, prod, test_files, findings, counts, stdout_lines)
+    _q1_black(target_root, root, fix, findings, counts, stdout_lines)
 
-    # Q1: black
-    tool = _tool("black", target_root)
-    stdout_lines.append("=" * 74)
-    stdout_lines.append("Q1 [MEDIUM] black formatting drift")
-    stdout_lines.append("=" * 74)
-    if not tool:
-        stdout_lines.append("  SKIP: black not installed (pip install black)")
-        stdout_lines.append("")
-    elif fix:
-        excl = "|".join(re.escape(d) for d in sorted(EXCLUDE_DIRS))
-        rc, out = _run(tool.split() + [".", "--extend-exclude", excl], root)
-        changed = len(re.findall(r"^reformatted (.+)$", out, re.MULTILINE))
-        msg = (
-            f"\n  black: {changed} file(s) reformatted"
-            if changed
-            else "\n  black: already clean"
-        )
-        stdout_lines.append(msg)
-        print(msg)
-        stdout_lines.append("")
-    else:
-        excl = "|".join(re.escape(d) for d in sorted(EXCLUDE_DIRS))
-        rc, out = _run(tool.split() + ["--check", ".", "--extend-exclude", excl], root)
-        files = re.findall(r"^would reformat (.+)$", out, re.MULTILINE)
-        if rc == 0:
-            stdout_lines.append("  formatted cleanly")
-        elif not files and rc != 1:
-            stdout_lines.append(f"  SKIP: black errored: {out.strip()[:200]}")
-        else:
-            counts["MEDIUM"] += len(files)
-            stdout_lines.append(
-                f"  {len(files)} file(s) would be reformatted (first 15):"
-            )
-            for f in files[:15]:
-                stdout_lines.append(f"    {f}")
-                findings.append(
-                    Finding(
-                        rule_id="Q1",
-                        severity=Severity.MEDIUM,
-                        message=f"would reformat {f}",
-                        source="quality",
-                    )
-                )
-        stdout_lines.append("")
+    _q2_ruff(target_root, root, fix, findings, counts, stdout_lines)
 
-    # Q2: ruff
-    tool = _tool("ruff", target_root)
-    stdout_lines.append("=" * 74)
-    stdout_lines.append("Q2 [MEDIUM/HIGH] ruff lint (I=import-order, S=security->HIGH)")
-    stdout_lines.append("=" * 74)
-    if not tool:
-        stdout_lines.append("  SKIP: ruff not installed (pip install ruff)")
-        stdout_lines.append("")
-    elif fix:
-        rc, out = _run(
-            tool.split()
-            + [
-                "check",
-                ".",
-                "--fix",
-                "--select",
-                "E,F,W,I,B,S",
-                "--ignore",
-                "S101,S105,S110,S112,S603,S607,B007,B023,B905,E501",
-                "--exit-zero",
-            ],
-            root,
-        )
-        fixed_count = len(re.findall(r"^Fixed \d", out, re.MULTILINE)) or (
-            1 if "fixed" in out.lower() else 0
-        )
-        msg = f"\n  ruff: {fixed_count} issue(s) auto-fixed"
-        stdout_lines.append(msg)
-        print(msg)
-        # Still report remaining unfixable issues
-        stdout_lines.append("  re-running check for remaining issues...")
-        rc2, out2 = _run(
-            tool.split()
-            + [
-                "check",
-                ".",
-                "--select",
-                "E,F,W,I,B,S",
-                "--ignore",
-                "S101,S105,S110,S112,S603,S607,B007,B023,B905,E501",
-                "--output-format",
-                "json",
-                "--exit-zero",
-            ],
-            root,
-        )
-        try:
-            ruff_findings = json.loads(out2[out2.index("[") : out2.rindex("]") + 1])
-        except (ValueError, json.JSONDecodeError):
-            ruff_findings = []
-        sec = [f for f in ruff_findings if str(f.get("code", "")).startswith("S")]
-        lint = [f for f in ruff_findings if not str(f.get("code", "")).startswith("S")]
-        counts["HIGH"] += len(sec)
-        counts["MEDIUM"] += len(lint)
-        stdout_lines.append(
-            f"  remaining — security (S*): {len(sec)}   lint/style: {len(lint)}"
-        )
-        for f in sec:
-            findings.append(
-                Finding(
-                    rule_id="Q2",
-                    severity=Severity.HIGH,
-                    message=f"{f.get('code')}: {f.get('message', '')}",
-                    file=f.get("filename"),
-                    source="quality",
-                )
-            )
-        for f in lint:
-            findings.append(
-                Finding(
-                    rule_id="Q2",
-                    severity=Severity.MEDIUM,
-                    message=f"{f.get('code')}: {f.get('message', '')}",
-                    file=f.get("filename"),
-                    source="quality",
-                )
-            )
-        stdout_lines.append("")
-    else:
-        rc, out = _run(
-            tool.split()
-            + [
-                "check",
-                ".",
-                "--select",
-                "E,F,W,I,B,S",
-                "--ignore",
-                "S101,S105,S110,S112,S603,S607,B007,B023,B905,E501",
-                "--output-format",
-                "json",
-                "--exit-zero",
-            ],
-            root,
-        )
-        try:
-            ruff_findings = json.loads(out[out.index("[") : out.rindex("]") + 1])
-        except (ValueError, json.JSONDecodeError):
-            stdout_lines.append(
-                f"  SKIP: could not parse ruff output: {out.strip()[:200]}"
-            )
-            stdout_lines.append("")
-            ruff_findings = []
-        sec = [f for f in ruff_findings if str(f.get("code", "")).startswith("S")]
-        lint = [f for f in ruff_findings if not str(f.get("code", "")).startswith("S")]
-        counts["HIGH"] += len(sec)
-        counts["MEDIUM"] += len(lint)
-        stdout_lines.append(f"  security (S*): {len(sec)}   lint/style: {len(lint)}")
-        for f in sec:
-            findings.append(
-                Finding(
-                    rule_id="Q2",
-                    severity=Severity.HIGH,
-                    message=f"{f.get('code')}: {f.get('message', '')}",
-                    file=f.get("filename"),
-                    source="quality",
-                )
-            )
-        for f in lint:
-            findings.append(
-                Finding(
-                    rule_id="Q2",
-                    severity=Severity.MEDIUM,
-                    message=f"{f.get('code')}: {f.get('message', '')}",
-                    file=f.get("filename"),
-                    source="quality",
-                )
-            )
-        stdout_lines.append("")
+    _q3_mypy(target_root, root, strict_mypy, findings, counts, stdout_lines)
+    _q4_cves(target_root, root, findings, counts, stdout_lines)
 
-    # Q3: mypy
-    tool = _tool("mypy", target_root)
-    stdout_lines.append("=" * 74)
-    stdout_lines.append(
-        f"Q3 [MEDIUM] mypy type errors ({'strict' if strict_mypy else 'default'})"
+    _q5_never_executed(
+        root, tests_dir, fast, pytest_extra, shared_cov, findings, counts, stdout_lines
     )
-    stdout_lines.append("=" * 74)
-    if not tool:
-        stdout_lines.append("  SKIP: mypy not installed (pip install mypy)")
-        stdout_lines.append("")
-    else:
-        args = tool.split() + [
-            ".",
-            "--ignore-missing-imports",
-            "--no-error-summary",
-            "--follow-imports=silent",
-            "--exclude",
-            "|".join(sorted(EXCLUDE_DIRS)),
-        ]
-        if strict_mypy:
-            args.append("--strict")
-        rc, out = _run(args, root)
-        errs = [line for line in out.splitlines() if ": error:" in line]
-        if rc in (-1, -2):
-            stdout_lines.append(f"  SKIP: {out.strip()[:200]}")
-        else:
-            counts["MEDIUM"] += len(errs)
-            if not errs:
-                stdout_lines.append("  clean")
-            else:
-                stdout_lines.append(f"  {len(errs)} error(s) (first 10):")
-                for line in errs[:10]:
-                    stdout_lines.append(f"    {line[:120]}")
-                    findings.append(
-                        Finding(
-                            rule_id="Q3",
-                            severity=Severity.MEDIUM,
-                            message=line[:200],
-                            source="quality",
-                        )
-                    )
-        stdout_lines.append("")
 
-    # Q4: CVEs
-    stdout_lines.append("=" * 74)
-    stdout_lines.append("Q4 [HIGH] known CVEs in installed dependencies")
-    stdout_lines.append("=" * 74)
-    cve_found = False
-    for name, cargs in (
-        ("pip-audit", ["--progress-spinner", "off"]),
-        ("safety", ["check", "--output", "text"]),
-    ):
-        tool = _tool(name, target_root)
-        if not tool:
-            continue
-        rc, out = _run(tool.split() + cargs, root, timeout=300)
-        if rc in (-1, -2) or "error" in out.lower()[:200]:
-            continue
-        vulns = len(
-            re.findall(r"(?i)\bvulnerabilit(?:y|ies) found|-> vuln|CVE-\d{4}", out)
-        )
-        if rc == 0 and not vulns:
-            stdout_lines.append(f"  {name}: no known vulnerabilities")
-            cve_found = True
-            break
-        counts["HIGH"] += max(vulns, 1)
-        cve_found = True
-        stdout_lines.append(f"  {name}: {max(vulns,1)} vulnerability signal(s)")
-        findings.append(
-            Finding(
-                rule_id="Q4",
-                severity=Severity.HIGH,
-                message=f"{max(vulns,1)} vulnerabilities via {name}",
-                source="quality",
-            )
-        )
-        break
-    if not cve_found:
-        stdout_lines.append("  SKIP: neither pip-audit nor safety installed")
-    stdout_lines.append("")
-
-    # Q5: per-def execution coverage
-    stdout_lines.append("=" * 74)
-    stdout_lines.append("Q5 [MEDIUM] defs whose body NEVER EXECUTES under the suite")
-    stdout_lines.append("=" * 74)
-    if fast:
-        stdout_lines.append("  SKIP: --fast")
-        stdout_lines.append("")
-    else:
-        if importlib.util.find_spec("coverage") is None:
-            stdout_lines.append("  SKIP: coverage not installed (pip install coverage)")
-            stdout_lines.append("")
-        else:
-            tmp = Path(tempfile.mkdtemp(prefix="audit_q5_"))
-            json_file = tmp / "cov.json"
-            rc = 0
-            cache_hit = False
-            # Byte-fingerprint of all source + test files: identical bytes ⇒
-            # identical coverage, so a cached .coverage can stand in for a rerun.
-            cache_key = _q5_fingerprint(root, tests_dir, pytest_extra)
-            if (
-                shared_cov is not None
-                and shared_cov.exists()
-                and shared_cov.stat().st_size > 0
-            ):
-                # The suite audit already ran the whole suite under coverage;
-                # reuse its data instead of a second full test run.
-                data_file = shared_cov
-                env = dict(os.environ, COVERAGE_FILE=str(data_file))
-                stdout_lines.append(
-                    "  reusing the suite audit's coverage run (deduped — no second run)"
-                )
-            else:
-                cached = _q5_cache_load(root, cache_key)
-                if cached is not None:
-                    # Quality-only mode: no suite ran, but nothing changed since
-                    # the last coverage run, so reuse the cached .coverage.
-                    data_file = cached
-                    env = dict(os.environ, COVERAGE_FILE=str(data_file))
-                    cache_hit = True
-                    stdout_lines.append(
-                        "  reusing cached Q5 coverage (source unchanged since last "
-                        "run; set AUDIT_NO_Q5_CACHE=1 to force a rerun)"
-                    )
-                else:
-                    data_file = tmp / ".coverage"
-                    env = dict(os.environ, COVERAGE_FILE=str(data_file))
-                    stdout_lines.append(
-                        "  running suite under coverage (this is a full test run)..."
-                    )
-                    rc, out = _run(
-                        [
-                            sys.executable,
-                            "-m",
-                            "coverage",
-                            "run",
-                            f"--source={root}",
-                            "-m",
-                            "pytest",
-                            str(tests_dir),
-                            "-q",
-                            "--tb=no",
-                            *pytest_extra.split(),
-                        ],
-                        root,
-                        timeout=1800,
-                        env=env,
-                    )
-            # Persist a freshly produced coverage file (from either the shared
-            # suite run or this mode's own run) so the next quality-only run is
-            # instant while the source is unchanged.
-            if not cache_hit and data_file.exists() and data_file.stat().st_size > 0:
-                _q5_cache_save(root, cache_key, data_file)
-            if not data_file.exists():
-                reason = (
-                    f"coverage run exit={rc}"
-                    if rc != 0
-                    else "no .coverage file produced"
-                )
-                stdout_lines.append(
-                    f"  SKIP: {reason} — did pytest crash or have no tests?"
-                )
-                stdout_lines.append("")
-            else:
-                rc2, out2 = _run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "coverage",
-                        "json",
-                        "-o",
-                        str(json_file),
-                        "--data-file",
-                        str(data_file),
-                    ],
-                    root,
-                    env=env,
-                )
-                try:
-                    cov = json.loads(json_file.read_text(encoding="utf-8"))
-                except OSError as e:
-                    stdout_lines.append(f"  SKIP: could not read coverage json ({e})")
-                    stdout_lines.append("")
-                    cov = None
-                except json.JSONDecodeError as e:
-                    stdout_lines.append(f"  SKIP: coverage json is malformed: {e}")
-                    stdout_lines.append("")
-                    cov = None
-                if cov is not None and not cov.get("files"):
-                    stdout_lines.append(
-                        "  SKIP: coverage json has no file data (empty project?)"
-                    )
-                    stdout_lines.append("")
-                    cov = None
-                if cov is not None:
-                    executed = {}
-                    for fname, fdata in cov.get("files", {}).items():
-                        executed[Path(root / fname).resolve()] = set(
-                            fdata.get("executed_lines", [])
-                        )
-
-                    prod_files, _ = _py_files(root, tests_dir)
-                    total = never = 0
-                    flagged = []
-                    for p in prod_files:
-                        lines = executed.get(p.resolve())
-                        for qual, defline, b0, b1 in _def_spans(p):
-                            total += 1
-                            ran = bool(lines) and any(
-                                ln in (lines or set()) for ln in range(b0, b1 + 1)
-                            )
-                            if not ran:
-                                never += 1
-                                if (b1 - b0 + 1) >= MIN_FLAG_BODY_LINES:
-                                    flagged.append(
-                                        (
-                                            p.relative_to(root),
-                                            defline,
-                                            qual,
-                                            b1 - b0 + 1,
-                                        )
-                                    )
-                    pct = 100.0 * (total - never) / total if total else 100.0
-                    counts["MEDIUM"] += len(flagged)
-                    stdout_lines.append(
-                        f"  {total} defs scanned; {total - never} executed under tests "
-                        f"({pct:.1f}%); {never} never ran ({len(flagged)} flagged)"
-                    )
-                    shown = 0
-                    for rel, def_ln, qual, size in sorted(flagged, key=lambda x: -x[3]):
-                        if shown < 25:
-                            shown += 1
-                            stdout_lines.append(
-                                f"    {str(rel):44} :{def_ln:<5} {qual}  ({size} lines)"
-                            )
-                        findings.append(
-                            Finding(
-                                rule_id="Q5",
-                                severity=Severity.MEDIUM,
-                                message=f"{qual} never executed",
-                                file=str(rel),
-                                line=def_ln,
-                                source="quality",
-                            )
-                        )
-            stdout_lines.append("")
-
-    # Q6: docstring coverage
-    stdout_lines.append("=" * 74)
-    stdout_lines.append(
-        f"Q6 [MEDIUM] docstring coverage (< {DOC_THRESHOLD_PCT}% fails)"
-    )
-    stdout_lines.append("=" * 74)
-    have = need = 0
-    worst: dict = {}
-    for p in prod:
-        try:
-            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                name = node.name
-                if name.startswith("_") and name != "__init__":
-                    continue
-                need += 1
-                if ast.get_docstring(node):
-                    have += 1
-                else:
-                    worst.setdefault(p.relative_to(root), 0)
-                    worst[p.relative_to(root)] += 1
-    pct = 100.0 * have / need if need else 100.0
-    ok = pct >= DOC_THRESHOLD_PCT
-    if not ok:
-        counts["MEDIUM"] += need - have
-    stdout_lines.append(
-        f"  {have}/{need} public defs+classes documented ({pct:.1f}%) - "
-        f"{'PASS' if ok else 'FAIL'}"
-    )
-    if not ok:
-        for rel, n in sorted(worst.items(), key=lambda kv: -kv[1])[:10]:
-            stdout_lines.append(f"    {n:4} undocumented in {rel}")
-            findings.append(
-                Finding(
-                    rule_id="Q6",
-                    severity=Severity.MEDIUM,
-                    message=f"{n} undocumented in {rel}",
-                    source="quality",
-                )
-            )
-    stdout_lines.append("")
-
-    # Q7: test hygiene
-    stdout_lines.append("=" * 74)
-    hygiene_findings = []
-    for p in sorted(tests_dir.rglob("*.py")):
-        if any(part in EXCLUDE_DIRS for part in p.parts):
-            continue
-        try:
-            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                fn = node.func
-                if (
-                    isinstance(fn, ast.Attribute)
-                    and fn.attr == "sleep"
-                    and isinstance(fn.value, ast.Name)
-                    and fn.value.id == "time"
-                ):
-                    hygiene_findings.append(
-                        (p, node.lineno, "time.sleep() in a test - flaky AND slow")
-                    )
-                if (
-                    isinstance(fn, ast.Attribute)
-                    and fn.attr == "skip"
-                    and not node.args
-                    and not node.keywords
-                ):
-                    hygiene_findings.append(
-                        (p, node.lineno, "skip with NO reason - rots silently")
-                    )
-    stdout_lines.append(
-        f"Q7 [MEDIUM] test hygiene - {len(hygiene_findings)} finding(s)"
-    )
-    stdout_lines.append("=" * 74)
-    counts["MEDIUM"] += len(hygiene_findings)
-    for p, h_ln, msg in hygiene_findings[:20]:
-        stdout_lines.append(f"  {p.relative_to(root)}:{h_ln}  {msg}")
-        findings.append(
-            Finding(
-                rule_id="Q7",
-                severity=Severity.MEDIUM,
-                message=msg,
-                file=str(p.relative_to(root)),
-                line=h_ln,
-                source="quality",
-            )
-        )
-    stdout_lines.append("")
-
-    # Q8: mutation (opt-in)
-    stdout_lines.append("=" * 74)
-    stdout_lines.append("Q8 [INFO] mutation testing")
-    stdout_lines.append("=" * 74)
-    tool = _tool("mutmut", target_root)
-    if not tool:
-        stdout_lines.append("  SKIP: mutmut not installed")
-    elif not mutation:
-        stdout_lines.append("  SKIP: pass --mutation to run (slow)")
-    else:
-        rc, out = _run(
-            tool.split() + ["run", "--paths-to-mutate", "."], root, timeout=3600
-        )
-        killed = len(re.findall(r"killed", out, re.IGNORECASE))
-        survived = len(re.findall(r"survived", out, re.IGNORECASE))
-        stdout_lines.append(f"  killed: {killed}   survived: {survived}")
-        counts["INFO"] += survived
-    stdout_lines.append("")
+    _q6_docstrings(root, prod, findings, counts, stdout_lines)
+    _q7_test_hygiene(root, tests_dir, findings, counts, stdout_lines)
+    _q8_mutation(target_root, root, mutation, counts, stdout_lines)
 
     # Summary
     stdout_lines.append("=" * 74)

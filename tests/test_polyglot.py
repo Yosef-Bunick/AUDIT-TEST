@@ -776,6 +776,375 @@ def test_ast_js_existing_rules_still_work(tmp_path):
     assert "js-ast-dangerous-html" in _ids(res)  # still fires
 
 
+# ── roadmap checklist rules (2026-07 batch) ───────────────────────────────────
+
+
+def test_js_hook_in_conditional(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "function C() { if (ready) { useEffect(() => {}); } return null; }\n",
+    )
+    assert "poly-js-hook-conditional" in _ids(res)
+
+
+def test_js_hook_toplevel_not_flagged(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "function C() { const x = useMemo(() => 1, []); return null; }\n",
+    )
+    assert "poly-js-hook-conditional" not in _ids(res)
+
+
+def test_js_parseint_without_radix(tmp_path):
+    res = _run(tmp_path, "phd", "javascript", "a.js", "const n = parseInt(s);\n")
+    assert "poly-js-parseint-no-radix" in _ids(res)
+
+
+def test_js_parseint_with_radix_not_flagged(tmp_path):
+    res = _run(tmp_path, "phd", "javascript", "a.js", "const n = parseInt(s, 10);\n")
+    assert "poly-js-parseint-no-radix" not in _ids(res)
+
+
+def test_js_loose_equality(tmp_path):
+    res = _run(tmp_path, "phd", "javascript", "a.js", "if (a == b) { f(); }\n")
+    assert "poly-js-loose-eq" in _ids(res)
+
+
+def test_js_strict_and_null_equality_not_flagged(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "if (a === b) {}\nif (c == null) {}\nif (d !== e) {}\n",
+    )
+    assert "poly-js-loose-eq" not in _ids(res)
+
+
+def test_ts_explicit_any(tmp_path):
+    res = _run(tmp_path, "phd", "typescript", "a.ts", "function f(x: any) {}\n")
+    assert "poly-ts-any" in _ids(res)
+
+
+def test_ts_numeric_enum(tmp_path):
+    res = _run(tmp_path, "phd", "typescript", "a.ts", "enum Color { Red, Green }\n")
+    assert "poly-ts-enum-numeric" in _ids(res)
+
+
+def test_ts_string_enum_not_flagged(tmp_path):
+    res = _run(tmp_path, "phd", "typescript", "a.ts", 'enum Color { Red = "red" }\n')
+    assert "poly-ts-enum-numeric" not in _ids(res)
+
+
+def test_vue_reactive_destructure(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "const { count } = reactive({ count: 0 });\n",
+    )
+    assert "poly-js-reactive-destructure" in _ids(res)
+
+
+def test_go_mutex_by_value(tmp_path):
+    res = _run(tmp_path, "phd", "go", "a.go", "func f(mu sync.Mutex) {}\n")
+    assert "poly-go-mutex-value" in _ids(res)
+
+
+def test_go_mutex_by_pointer_not_flagged(tmp_path):
+    res = _run(tmp_path, "phd", "go", "a.go", "func f(mu *sync.Mutex) {}\n")
+    assert "poly-go-mutex-value" not in _ids(res)
+
+
+def test_go_timeafter_in_select_loop(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "go",
+        "a.go",
+        "func f() {\n\tfor {\n\t\tselect {\n\t\tcase <-time.After(d):\n"
+        "\t\t\treturn\n\t\t}\n\t}\n}\n",
+    )
+    assert "poly-go-timeafter-select-loop" in _ids(res)
+
+
+def test_go_empty_interface(tmp_path):
+    res = _run(tmp_path, "runtime", "go", "a.go", "func f(x interface{}) {}\n")
+    assert "poly-go-empty-interface" in _ids(res)
+
+
+def test_rust_expect_empty_message(tmp_path):
+    res = _run(tmp_path, "phd", "rust", "a.rs", 'fn f() { x.expect(""); }\n')
+    assert "poly-rust-expect-empty" in _ids(res)
+
+
+def test_rust_async_blocking_io(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "rust",
+        "a.rs",
+        'async fn f() { let d = std::fs::read("x"); }\n',
+    )
+    assert "poly-rust-async-blocking" in _ids(res)
+
+
+def test_rust_clone_in_loop(tmp_path):
+    res = _run(
+        tmp_path,
+        "runtime",
+        "rust",
+        "a.rs",
+        "fn f() { for x in items {\n    let y = x.clone();\n} }\n",
+    )
+    assert "poly-rust-clone-in-loop" in _ids(res)
+
+
+def test_java_string_reference_equality(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "java",
+        "A.java",
+        'class A { boolean f() { return s == "x"; } }\n',
+    )
+    assert "poly-java-string-eq" in _ids(res)
+
+
+def test_java_legacy_date_api(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "java",
+        "A.java",
+        'class A { void f() { df = new SimpleDateFormat("yyyy"); } }\n',
+    )
+    assert "poly-java-legacy-date" in _ids(res)
+
+
+def test_java_optional_field(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "java",
+        "A.java",
+        "class A { private Optional<String> name; }\n",
+    )
+    assert "poly-java-optional-field" in _ids(res)
+
+
+def test_java_optional_return_not_flagged(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "java",
+        "A.java",
+        "class A { public Optional<String> findName() { return x; } }\n",
+    )
+    assert "poly-java-optional-field" not in _ids(res)
+
+
+def test_java_autowired_field_injection(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "java",
+        "A.java",
+        "class A {\n  @Autowired\n  private FooService foo;\n}\n",
+    )
+    assert "poly-java-field-injection" in _ids(res)
+
+
+def test_csharp_blocking_on_task(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "csharp",
+        "A.cs",
+        "class A { void F() { var r = task.Result; task.Wait(); } }\n",
+    )
+    assert "poly-cs-blocking-async" in _ids(res)
+
+
+def test_csharp_async_void(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "csharp",
+        "A.cs",
+        "class A { async void Handle() {} }\n",
+    )
+    assert "poly-cs-async-void" in _ids(res)
+
+
+def test_csharp_async_task_not_flagged(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "csharp",
+        "A.cs",
+        "class A { async Task Handle() {} }\n",
+    )
+    assert "poly-cs-async-void" not in _ids(res)
+
+
+def test_csharp_throw_ex_resets_trace(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "csharp",
+        "A.cs",
+        "class A { void F() { try {} catch (Exception ex) { Log(ex); throw ex; } } }\n",
+    )
+    assert "poly-cs-throw-ex" in _ids(res)
+
+
+def test_csharp_bare_rethrow_not_flagged(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "csharp",
+        "A.cs",
+        "class A { void F() { try {} catch (Exception ex) { Log(ex); throw; } } }\n",
+    )
+    assert "poly-cs-throw-ex" not in _ids(res)
+
+
+def test_cpp_raw_new(tmp_path):
+    res = _run(tmp_path, "phd", "cpp", "a.cpp", "Foo* f = new Foo();\n")
+    assert "poly-cpp-raw-new" in _ids(res)
+
+
+def test_cpp_smart_pointer_new_not_flagged(tmp_path):
+    res = _run(tmp_path, "phd", "cpp", "a.cpp", "std::unique_ptr<Foo> f(new Foo());\n")
+    assert "poly-cpp-raw-new" not in _ids(res)
+
+
+def test_c_malloc_without_null_check(tmp_path):
+    res = _run(tmp_path, "phd", "cpp", "a.c", "p = malloc(n);\nuse(p);\n")
+    assert "poly-c-malloc-unchecked" in _ids(res)
+
+
+def test_c_malloc_with_null_check_not_flagged(tmp_path):
+    res = _run(tmp_path, "phd", "cpp", "a.c", "p = malloc(n);\nif (!p) return;\n")
+    assert "poly-c-malloc-unchecked" not in _ids(res)
+
+
+def test_c_malloc_multiplication_overflow(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "cpp",
+        "a.c",
+        "buf = malloc(n * sizeof(int));\nif (!buf) return;\n",
+    )
+    assert "poly-c-alloc-overflow" in _ids(res)
+
+
+def test_kotlin_globalscope(tmp_path):
+    res = _run(
+        tmp_path, "phd", "kotlin", "A.kt", "fun f() { GlobalScope.launch { g() } }\n"
+    )
+    assert "poly-kotlin-globalscope" in _ids(res)
+
+
+def test_kotlin_job_in_builder(tmp_path):
+    res = _run(
+        tmp_path, "phd", "kotlin", "A.kt", "fun f() { scope.launch(Job()) { g() } }\n"
+    )
+    assert "poly-kotlin-job-in-builder" in _ids(res)
+
+
+def test_swift_unowned(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "swift",
+        "A.swift",
+        "f { [unowned self] in self.g() }\n",
+    )
+    assert "poly-swift-unowned" in _ids(res)
+
+
+def test_swift_implicitly_unwrapped_optional(tmp_path):
+    res = _run(tmp_path, "phd", "swift", "A.swift", "var name: String!\n")
+    assert "poly-swift-iuo" in _ids(res)
+
+
+def test_swift_iboutlet_iuo_not_flagged(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "swift",
+        "A.swift",
+        "@IBOutlet weak var label: UILabel!\n",
+    )
+    assert "poly-swift-iuo" not in _ids(res)
+
+
+def test_php_loose_equality(tmp_path):
+    res = _run(tmp_path, "phd", "php", "a.php", "<?php if ($a == $b) { f(); }\n")
+    assert "poly-php-loose-eq" in _ids(res)
+
+
+def test_php_strict_equality_not_flagged(tmp_path):
+    res = _run(tmp_path, "phd", "php", "a.php", "<?php if ($a === $b) { f(); }\n")
+    assert "poly-php-loose-eq" not in _ids(res)
+
+
+def test_php_sql_interpolation(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "php",
+        "a.php",
+        '<?php $db->query("SELECT * FROM t WHERE id = $id");\n',
+    )
+    assert "poly-php-sql-interp" in _ids(res)
+    assert res.status == AuditStatus.FAIL  # HIGH
+
+
+def test_php_query_variable_not_flagged(tmp_path):
+    res = _run(tmp_path, "phd", "php", "a.php", "<?php $db->query($sql);\n")
+    assert "poly-php-sql-interp" not in _ids(res)
+
+
+def test_css_important_and_zindex(tmp_path):
+    res = _run(
+        tmp_path,
+        "runtime",
+        "css",
+        "a.css",
+        ".a { color: red !important; }\n.m { z-index: 9999; }\n",
+    )
+    ids = _ids(res)
+    assert {"poly-css-important", "poly-css-high-zindex"} <= ids
+    assert all(f.severity == Severity.INFO for f in res.findings)
+
+
+def test_css_low_zindex_not_flagged(tmp_path):
+    res = _run(tmp_path, "runtime", "css", "a.css", ".m { z-index: 10; }\n")
+    assert "poly-css-high-zindex" not in _ids(res)
+
+
+def test_css_detected_by_extension(tmp_path):
+    (tmp_path / "style.scss").write_text(".a { color: red; }\n", encoding="utf-8")
+    got = polyglot.detect(tmp_path)
+    assert "css" in got
+
+
+def test_css_wiring_disabled(tmp_path):
+    res = _run(tmp_path, "wiring", "css", "a.css", ".dead-class { color: red; }\n")
+    assert res.findings == []
+
+
 # ── AST pack registration: skips visible, breakage loud ──────────────────────
 
 

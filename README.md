@@ -1,5 +1,4 @@
-still under construction
-# 🐇 audit-test
+﻿# 🐇 audit-test
 
 **One command. One policy. One fail-closed verdict.**
 
@@ -498,7 +497,7 @@ its import-graph walk.
 
 For known issues you can't fix right now but don't want to suppress. Unlike `# audit: ok`,
 this does NOT silence the finding — the annotation flags acknowledged debt.
-Grep the codebase for the current list, or see [ROADMAP.md](ROADMAP.md#known-issues-needs-fix).
+Grep the codebase for the current list, or see [ROADMAP.md](ROADMAP.md#needs-fix-inventory).
 
 ## Requirements
 

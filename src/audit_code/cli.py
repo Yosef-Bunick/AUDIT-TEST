@@ -70,6 +70,7 @@ ALL_MODULES = {
     "deps",
     "htmlhint",
     "stylelint",
+    "megalinter",
 }
 
 
@@ -221,6 +222,9 @@ def build_audit_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cppcheck", action="store_true", help="Run cppcheck")
     parser.add_argument("--htmlhint", action="store_true", help="Run htmlhint")
     parser.add_argument("--stylelint", action="store_true", help="Run stylelint")
+    parser.add_argument(
+        "--megalinter", action="store_true", help="Run MegaLinter (opt-in, slow)"
+    )
     parser.add_argument("--deps", action="store_true", help="Run dependency scanner")
     parser.add_argument(
         "-s",
@@ -1215,6 +1219,7 @@ def _expand_bare_words() -> None:
         "htmlhint": "--htmlhint",
         "deps": "--deps",
         "stylelint": "--stylelint",
+        "megalinter": "--megalinter",
         # module shortcuts
         "q": "--quality",
         "w": "--wiring",

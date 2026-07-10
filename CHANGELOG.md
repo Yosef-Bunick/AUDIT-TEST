@@ -1,6 +1,28 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.4.0 (current)
+
+Cumulative since 0.1.0 — see git history for per-release detail.
+
+### Added
+- Polyglot deep coverage: 63→72 tree-sitter AST rules across 9 languages
+  (JS/TS, Rust, Go, Java, C#, Kotlin, Swift, PHP, C/C++), 19 syntax adapters,
+  10 graph languages with cross-language subprocess/FFI edge detection
+- 30 new polyglot regex rules from the external code-review checklists
+  (React hooks, loose equality, Go mutex-by-value, Rust async blocking I/O,
+  Java String ==, C# sync-over-async, C malloc checks, Kotlin GlobalScope,
+  Swift IUO, PHP SQL interpolation) + a CSS/SCSS/LESS language spec
+- Python PhD engine grown to 55 rules (new: SEC6 string-built SQL,
+  SEC7 DEBUG=True in settings, B5 validation asserts, R10 double basicConfig)
+- 23 linter integrations incl. opt-in MegaLinter (`--megalinter`)
+- Profiler, surgeon v2 (cross-file port), focus groups, Q5 coverage cache
+
+### Changed
+- `quality.py` decomposed: Q0–Q8 sections extracted from the 550-line
+  `run()` god function into per-section helpers
+- Tarjan SCC replaced the recursion-limit hack in the graph module
+
+## 0.1.0
 
 ### Added
 - Real language adapters for all 9 supported languages — actual syntax checks

@@ -25,13 +25,16 @@ def _first(tree, node_type):
     return next(n for n in ast.walk(tree) if isinstance(n, node_type))
 
 
-# ── integration stubs → SKIP ─────────────────────────────────────────────────
+# ── megalinter integration ───────────────────────────────────────────────────
 
 
-def test_integration_stubs_skip(tmp_path):
-    # Only megalinter remains — #considering implementing
+def test_megalinter_skips_when_not_installed(tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     result = megalinter.run(tmp_path)
     assert result.status == AuditStatus.SKIP
+    assert result.tool_missing
 
 
 # ── reporting.write ──────────────────────────────────────────────────────────

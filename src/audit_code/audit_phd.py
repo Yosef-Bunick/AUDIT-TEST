@@ -75,6 +75,18 @@ WHAT CHANGED IN v3.1 (gap batch: the 3am failure modes)
          _imp()/import_module() wrappers; modules defining __getattr__
          are skipped (dynamic attrs); class targets are skipped        MEDIUM
 
+WHAT CHANGED IN v3.2 (roadmap checklist batch)
+==============================================
+  - SEC6 SQL built with f-string/%/.format/concat passed to execute();
+         only strings containing an SQL keyword flag, so non-DB
+         .execute() methods stay quiet                                  HIGH
+  - SEC7 DEBUG = True in a settings module (dev/local/test settings
+         variants exempt)                                               MEDIUM
+  - B5   assert used for runtime validation - python -O strips
+         asserts; isinstance/is-not-None narrowing idioms exempt        MEDIUM
+  - R10  logging.basicConfig() called more than once project-wide -
+         only the first call takes effect                               MEDIUM
+
 Workflow:
   - Inline suppression: put  # audit: ok  on the flagged line.
   - --json  emits machine-readable findings (for CI diffing).
@@ -102,7 +114,7 @@ Performance (audit Phase 4):
   P4 settings lookups in loops
 Security (audit Phase 1/2):
   SEC1 shell=True | SEC2 dynamic code execution | B2 no-timeout HTTP
-  SEC3 hardcoded credentials
+  SEC3 hardcoded credentials | SEC6 string-built SQL | SEC7 DEBUG=True
 Engine regressions:
   E1 prompts frozen at import | E2 hook prompts missing {task}
 
@@ -1223,7 +1235,127 @@ def main():
                                 "TypeError at instantiation",
                             )
 
+        # SEC6 — SQL statement built with f-string/%/.format/concat passed
+        # to execute(). Only strings containing an SQL keyword flag, so a
+        # generic .execute() method on a non-DB object stays quiet.
+        SQL_WORDS = ("select ", "insert ", "update ", "delete ", "create ", "drop ")
+
+        def _sqlish(s):
+            low = s.lower()
+            return any(w in low for w in SQL_WORDS)
+
+        def _built_sql(arg):
+            if isinstance(arg, ast.JoinedStr):
+                parts = "".join(
+                    c.value
+                    for c in arg.values
+                    if isinstance(c, ast.Constant) and isinstance(c.value, str)
+                )
+                return _sqlish(parts)
+            if isinstance(arg, ast.BinOp) and isinstance(arg.op, (ast.Mod, ast.Add)):
+                return any(
+                    isinstance(sub, ast.Constant)
+                    and isinstance(sub.value, str)
+                    and _sqlish(sub.value)
+                    for sub in ast.walk(arg)
+                )
+            if (
+                isinstance(arg, ast.Call)
+                and isinstance(arg.func, ast.Attribute)
+                and arg.func.attr == "format"
+                and isinstance(arg.func.value, ast.Constant)
+                and isinstance(arg.func.value.value, str)
+            ):
+                return _sqlish(arg.func.value.value)
+            return False
+
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and call_name(node) in ("execute", "executemany", "executescript")
+                and node.args
+                and _built_sql(node.args[0])
+            ):
+                sink.add(
+                    "SEC6",
+                    f,
+                    node.lineno,
+                    f"SQL built with f-string/format/concat passed to "
+                    f"{call_name(node)}() — use parameterized queries (?, :name)",
+                )
+
+        # B5 — assert used for runtime validation. python -O strips asserts,
+        # so the check silently vanishes in optimized runs. Type-narrowing
+        # idioms (assert isinstance, assert x is not None) are accepted.
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assert):
+                continue
+            t = node.test
+            if isinstance(t, ast.Call) and call_name(t) == "isinstance":
+                continue
+            if (
+                isinstance(t, ast.Compare)
+                and len(t.ops) == 1
+                and isinstance(t.ops[0], ast.IsNot)
+                and isinstance(t.comparators[0], ast.Constant)
+                and t.comparators[0].value is None
+            ):
+                continue
+            sink.add(
+                "B5",
+                f,
+                node.lineno,
+                "assert used for validation — stripped under python -O; "
+                "raise ValueError/TypeError instead",
+            )
+
+        # SEC7 — DEBUG = True committed in a settings module (framework
+        # settings leak stack traces/secrets when this reaches production).
+        # dev/local/test settings variants are exempt.
+        stem = p.stem.lower()
+        if ("settings" in stem or p.parent.name == "settings") and not any(
+            k in stem for k in ("dev", "local", "test")
+        ):
+            for st in tree.body:
+                if (
+                    isinstance(st, ast.Assign)
+                    and any(
+                        isinstance(tg, ast.Name) and tg.id == "DEBUG"
+                        for tg in st.targets
+                    )
+                    and isinstance(st.value, ast.Constant)
+                    and st.value.value is True
+                ):
+                    sink.add(
+                        "SEC7",
+                        f,
+                        st.lineno,
+                        "DEBUG = True in a settings module — exposes stack "
+                        "traces and secrets if it reaches production",
+                    )
+
     # ── cross-file checks ────────────────────────────────────────────────
+
+    # R10 - logging.basicConfig() called more than once: only the first call
+    # takes effect, every later one is silently ignored.
+    basicconfig_sites = []
+    for p, tree in trees.items():
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and call_name(node) == "basicConfig"
+                and receiver_name(node) in ("logging", "")
+            ):
+                basicconfig_sites.append((rel(p), node.lineno))
+    if len(basicconfig_sites) > 1:
+        for fl, ln in basicconfig_sites:
+            sink.add(
+                "R10",
+                fl,
+                ln,
+                f"logging.basicConfig() called {len(basicconfig_sites)}x across "
+                "the project — only the first call takes effect",
+            )
 
     # D1 - duplicate module-level functions
     by_name = collections.defaultdict(list)
@@ -1677,11 +1809,23 @@ def main():
         ("SEC2", "HIGH", "eval/exec/exec_module/pickle.load (Phase 2 security)"),
         ("SEC3", "HIGH", "hardcoded credentials in source (R7 covers logs)"),
         ("SEC4", "HIGH", "yaml.load() without SafeLoader (RCE risk)"),
+        (
+            "SEC6",
+            "HIGH",
+            "SQL built with f-string/format/concat in execute() (injection)",
+        ),
+        (
+            "SEC7",
+            "MEDIUM",
+            "DEBUG = True in a settings module (data leak in production)",
+        ),
         ("B1", "HIGH", "mutable default arguments (Dim 1 - shared-state bugs)"),
         ("B4", "MEDIUM", "tempfile.mktemp/os.tempnam — race-prone (TOCTOU)"),
+        ("B5", "MEDIUM", "assert used for validation (stripped under python -O)"),
         ("F1", "HIGH", "locks defined but never acquired (Dim 3)"),
         ("F5", "MEDIUM", "lock ordering inconsistency (potential deadlock)"),
         ("R9", "HIGH", "broken structured logging — invalid kwargs to log.info()"),
+        ("R10", "MEDIUM", "logging.basicConfig() called >1x (only the first wins)"),
         ("SEC5", "HIGH", "SQLite engine without PRAGMA foreign_keys=ON"),
         ("P1", "HIGH", "imports inside loop bodies (Phase 4)"),
         ("E1", "HIGH", "prompts frozen at import (engine regression)"),
