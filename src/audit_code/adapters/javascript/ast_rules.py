@@ -5,6 +5,7 @@ structural bugs that need an actual parse tree: hook misuse, missing
 keys, dead state, etc.
 """
 
+import re
 from pathlib import Path
 
 import tree_sitter as ts
@@ -29,6 +30,11 @@ _ALL_EXT = _JS_EXT | _TS_EXT
 
 def _parser_for(path: Path) -> ts.Parser:
     return _TS_PARSER if path.suffix in _TS_EXT else _JS_PARSER
+
+
+# Mirrors polyglot.py's _FETCH_SHADOW_RE — a local `fetch` binding shadows
+# the global fetch() API for the whole file.
+_FETCH_SHADOW_RE = re.compile(r"\b(?:const|let|var|function\s*\*?)\s+fetch\b")
 
 
 # ── tree walker with parent tracking ──
@@ -163,9 +169,15 @@ def _check_dangerous_html(root: Path, sources: dict[Path, str]) -> list[Finding]
 
 
 def _check_fetch_no_error(root: Path, sources: dict[Path, str]) -> list[Finding]:
-    """Flag fetch() calls without .catch() or try/catch wrapper."""
+    """Flag fetch() calls without .catch() or try/catch wrapper.
+
+    Skips files with a local `const/let/var/function fetch = ...` binding —
+    that shadows the global fetch() API, so every bare `fetch(...)` call in
+    the file invokes the local wrapper, not a real network request."""
     findings: list[Finding] = []
     for path, text in sources.items():
+        if _FETCH_SHADOW_RE.search(text):
+            continue
         parser = _parser_for(path)
         tree = parser.parse(text.encode())
         src = text.encode()
@@ -454,8 +466,16 @@ def _check_duplicate_exports(root: Path, sources: dict[Path, str]) -> list[Findi
 def _check_usestate_unused_in_jsx(
     root: Path, sources: dict[Path, str]
 ) -> list[Finding]:
-    """Flag useState destructured variables that never appear in any JSX
-    expression within the same component function body."""
+    """Flag useState destructured variables that are never read anywhere else
+    in the enclosing function body — i.e. only ever written via the setter.
+
+    Originally this required the read to occur inside a JSX node, but that
+    misses two common, entirely valid patterns: conditional early-return
+    (`if (loading) return <Spinner/>` — the read is in the `if` test, not in
+    JSX) and custom hooks that return state to a caller instead of rendering
+    JSX themselves (no JSX node exists in the function at all). Requiring any
+    read at all, anywhere in the body, still catches genuinely dead state
+    while dropping both false-positive classes."""
     findings: list[Finding] = []
     for path, text in sources.items():
         parser = _parser_for(path)
@@ -470,8 +490,10 @@ def _check_usestate_unused_in_jsx(
             if body is None:
                 continue
 
-            # Collect useState destructured names + their lines
+            # Collect useState destructured names + their lines + the
+            # declaration-site identifier node (so it isn't counted as a use).
             state_vars: dict[str, int] = {}  # name -> line
+            decl_keys: dict[str, tuple] = {}  # name -> declaring node's _node_key
             for node in _walk(body):
                 if node.type != "call_expression":
                     continue
@@ -501,38 +523,36 @@ def _check_usestate_unused_in_jsx(
                             if first:
                                 name = src[first.start_byte : first.end_byte].decode()
                                 state_vars[name] = node.start_point[0] + 1
+                                decl_keys[name] = _node_key(first)
                         break
 
             if not state_vars:
                 continue
 
-            # Collect all identifiers used inside JSX expressions in this body
-            used_in_jsx: set[str] = set()
+            # Collect every other identifier occurrence of a tracked name,
+            # anywhere in the body — JSX or not — excluding the declaration.
+            # `shorthand_property_identifier` is how tree-sitter types a read
+            # via object-literal shorthand (`return { flags, loading }`), the
+            # standard way a custom hook hands state back to its caller.
+            used_elsewhere: set[str] = set()
             for node in _walk(body):
-                if node.type == "identifier":
-                    # Check if inside a jsx_expression or jsx_element
-                    cur = node
-                    for _ in range(15):
-                        cur = parents.get(_node_key(cur))
-                        if cur is None:
-                            break
-                        if cur.type in (
-                            "jsx_expression",
-                            "jsx_element",
-                            "jsx_self_closing_element",
-                        ):
-                            name = src[node.start_byte : node.end_byte].decode()
-                            used_in_jsx.add(name)
-                            break
+                if node.type not in ("identifier", "shorthand_property_identifier"):
+                    continue
+                name = src[node.start_byte : node.end_byte].decode()
+                if name not in state_vars:
+                    continue
+                if decl_keys.get(name) == _node_key(node):
+                    continue  # the declaration itself, not a read
+                used_elsewhere.add(name)
 
             for name, line in state_vars.items():
-                if name not in used_in_jsx:
+                if name not in used_elsewhere:
                     findings.append(
                         Finding(
                             rule_id="js-ast-usestate-unused-in-jsx",
                             severity=Severity.MEDIUM,
-                            message=f"useState variable '{name}' never used in "
-                            "JSX — dead state",
+                            message=f"useState variable '{name}' never read "
+                            "anywhere — dead state",
                             file=rel(path, root),
                             line=line,
                             language="javascript",

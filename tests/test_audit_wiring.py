@@ -179,3 +179,137 @@ def test_find_dead_modules_relative_import_alive(monkeypatch, tmp_path):
     res = {p.name for p, _ in aw.find_dead_modules(list(prod), prod, {})}
     assert "util.py" not in res  # relative import keeps it alive
     assert "__init__.py" not in res  # package markers never flagged
+
+
+def test_find_dead_modules_excludes_alembic_migration(monkeypatch, tmp_path):
+    # Alembic loads migration files by scanning the versions/ directory and
+    # calling upgrade()/downgrade() by name — never a Python import — so a
+    # migration must not be reported as an unwired module.
+    monkeypatch.setattr(aw, "ROOT", tmp_path)
+    prod = _parse(
+        tmp_path,
+        {
+            "migrations/versions/abc123_init.py": (
+                "revision = 'abc123'\n"
+                "down_revision = None\n\n"
+                "def upgrade():\n    pass\n\n"
+                "def downgrade():\n    pass\n"
+            ),
+        },
+    )
+    res = {p.name: lb for p, lb in aw.find_dead_modules(list(prod), prod, {})}
+    assert "abc123_init.py" not in res
+
+
+def test_find_dead_modules_excludes_annotated_alembic_migration(monkeypatch, tmp_path):
+    # Newer Alembic templates emit `revision: str = "..."` (ast.AnnAssign),
+    # not `revision = "..."` (ast.Assign) — both must be recognized.
+    monkeypatch.setattr(aw, "ROOT", tmp_path)
+    prod = _parse(
+        tmp_path,
+        {
+            "migrations/versions/abc123_init.py": (
+                "from typing import Union, Sequence\n"
+                "revision: str = 'abc123'\n"
+                "down_revision: Union[str, Sequence[str], None] = None\n\n"
+                "def upgrade():\n    pass\n\n"
+                "def downgrade():\n    pass\n"
+            ),
+        },
+    )
+    res = {p.name: lb for p, lb in aw.find_dead_modules(list(prod), prod, {})}
+    assert "abc123_init.py" not in res
+
+
+# ── decorator-wired functions (FastAPI routes/middleware, Alembic) ──
+
+
+def test_decorator_wired_matches_app_object_not_just_router(monkeypatch, tmp_path):
+    src = (
+        "@app.get('/health')\n"
+        "def health():\n    return 'ok'\n\n"
+        "@app.middleware('http')\n"
+        "async def access_log(request, call_next):\n"
+        "    return await call_next(request)\n"
+    )
+    trees = _trees(monkeypatch, tmp_path, {"main.py": src})
+    defs = aw.index_defs(trees)
+    wired = aw._collect_decorator_wired(defs)
+    assert "health" in wired
+    assert "access_log" in wired
+
+
+def test_decorator_wired_recognizes_alembic_upgrade_downgrade(monkeypatch, tmp_path):
+    src = (
+        "revision = 'abc123'\n"
+        "down_revision = None\n\n"
+        "def upgrade():\n    pass\n\n"
+        "def downgrade():\n    pass\n"
+    )
+    trees = _trees(monkeypatch, tmp_path, {"migrations/versions/abc123_init.py": src})
+    defs = aw.index_defs(trees)
+    wired = aw._collect_decorator_wired(defs)
+    assert "upgrade" in wired
+    assert "downgrade" in wired
+
+
+def test_decorator_wired_recognizes_annotated_alembic_revision(monkeypatch, tmp_path):
+    # `revision: str = "..."` (ast.AnnAssign) — the newer Alembic template.
+    src = (
+        "revision: str = 'abc123'\n"
+        "down_revision = None\n\n"
+        "def upgrade():\n    pass\n\n"
+        "def downgrade():\n    pass\n"
+    )
+    trees = _trees(monkeypatch, tmp_path, {"migrations/versions/abc123_init.py": src})
+    defs = aw.index_defs(trees)
+    wired = aw._collect_decorator_wired(defs)
+    assert "upgrade" in wired
+    assert "downgrade" in wired
+
+
+def test_decorator_wired_ignores_plain_upgrade_outside_migration(monkeypatch, tmp_path):
+    # A function merely named `upgrade` in a non-Alembic file has no
+    # `revision = ...` marker, so it must not be auto-marked wired.
+    src = "def upgrade():\n    pass\n"
+    trees = _trees(monkeypatch, tmp_path, {"tools/version.py": src})
+    defs = aw.index_defs(trees)
+    wired = aw._collect_decorator_wired(defs)
+    assert "upgrade" not in wired
+
+
+# ── inline `# audit: ok` suppression ──
+
+
+def test_is_suppressed_matches_single_line_def(monkeypatch, tmp_path):
+    p = tmp_path / "m.py"
+    p.write_text("def helper():  # audit: ok (internal)\n    return 1\n")
+    assert aw._is_suppressed(p, 1) is True
+
+
+def test_is_suppressed_matches_multiline_signature_close(monkeypatch, tmp_path):
+    # The `# audit: ok` comment naturally lands on the line that closes a
+    # multi-line signature, not the `def` line the finding is anchored to.
+    p = tmp_path / "m.py"
+    p.write_text(
+        "def helper(\n    a,\n    b,\n):  # audit: ok (internal helper)\n"
+        "    return a + b\n"
+    )
+    assert aw._is_suppressed(p, 1) is True
+
+
+def test_is_suppressed_false_when_absent(monkeypatch, tmp_path):
+    p = tmp_path / "m.py"
+    p.write_text("def helper():\n    return 1\n")
+    assert aw._is_suppressed(p, 1) is False
+
+
+def test_main_honors_audit_ok_suppression(monkeypatch, tmp_path, capsys):
+    src = "def truly_dead():  # audit: ok (kept for future use)\n" "    return 1\n"
+    (tmp_path / "app.py").write_text(src, encoding="utf-8")
+    monkeypatch.setattr(aw, "ROOT", tmp_path)
+    monkeypatch.setattr(aw.sys, "argv", ["audit_wiring"])
+    aw.main()
+    out = capsys.readouterr().out
+    assert "truly_dead" not in out
+    assert "suppressed via" in out

@@ -63,6 +63,34 @@ def test_wiring_ignores_entry_points(tmp_path):
     assert res.findings == []
 
 
+def test_wiring_excludes_named_iife(tmp_path):
+    # A named function EXPRESSION invoked immediately — `(function foo(){})()`
+    # — is invoked by the surrounding parens, not by a second reference to its
+    # name, so it must not be flagged as dead.
+    res = _run(
+        tmp_path,
+        "wiring",
+        "javascript",
+        "a.js",
+        "(function installThing() {\n  console.log('hi');\n})();\n",
+    )
+    assert not any("installThing" in m for m in _msgs(res))
+
+
+def test_wiring_still_flags_dead_named_function_expr_bound_to_var(tmp_path):
+    # A named function expression that is assigned (not IIFE-invoked) and
+    # whose name is never called elsewhere is still dead — only a directly
+    # preceding '(' exempts a definition.
+    res = _run(
+        tmp_path,
+        "wiring",
+        "javascript",
+        "a.js",
+        "const unused = function neverCalled() { return 1; };\n",
+    )
+    assert any("neverCalled" in m for m in _msgs(res))
+
+
 # ── phd: correctness / security ──────────────────────────────────────────────
 
 
@@ -206,6 +234,38 @@ def test_phd_fetch_with_signal_not_flagged(tmp_path):
         "javascript",
         "a.js",
         "fetch('/api/data', { signal: AbortSignal.timeout(5000) });\n",
+    )
+    assert "poly-js-fetch-no-signal" not in _ids(res)
+
+
+def test_phd_fetch_with_signal_on_later_line_not_flagged(tmp_path):
+    # A formatter-wrapped multi-line fetch() call puts `signal:` on a line
+    # after `fetch(` — the lookahead must see across that newline.
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "fetch(url, {\n"
+        "  method: 'POST',\n"
+        "  signal: AbortSignal.timeout(30000),\n"
+        "  headers: {},\n"
+        "});\n",
+    )
+    assert "poly-js-fetch-no-signal" not in _ids(res)
+
+
+def test_phd_fetch_not_flagged_when_locally_shadowed(tmp_path):
+    # A local `const fetch = ...` wrapper shadows the global fetch() API —
+    # bare `fetch(...)` calls in this file invoke the wrapper, not a real
+    # network request, so the fetch-specific rule must not fire here.
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "const fetch = async (filter, p) => { return doThing(filter, p); };\n"
+        "fetch(sourceFilter, page);\n",
     )
     assert "poly-js-fetch-no-signal" not in _ids(res)
 
@@ -622,6 +682,18 @@ def test_ast_js_fetch_in_try(tmp_path):
     assert "js-ast-fetch-no-error" not in _ids(res)
 
 
+def test_ast_js_fetch_not_flagged_when_locally_shadowed(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "const fetch = async (filter, p) => { return doThing(filter, p); };\n"
+        "fetch(sourceFilter, page);\n",
+    )
+    assert "js-ast-fetch-no-error" not in _ids(res)
+
+
 def test_ast_js_map_missing_key(tmp_path):
     res = _run(
         tmp_path,
@@ -732,6 +804,39 @@ def test_ast_js_usestate_used_in_jsx(tmp_path):
         "javascript",
         "a.jsx",
         "function Comp() { const [name, setName] = useState(''); return <div>{name}</div>; }\n",
+    )
+    assert "js-ast-usestate-unused-in-jsx" not in _ids(res)
+
+
+def test_ast_js_usestate_read_in_conditional_return(tmp_path):
+    # Conditional early-return reads the state OUTSIDE any JSX node — the `if`
+    # test — which the original JSX-only scan false-positived on.
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.jsx",
+        "function Comp() {\n"
+        "  const [loading, setLoading] = useState(true);\n"
+        "  if (loading) return <div>Spinner</div>;\n"
+        "  return <div>Done</div>;\n"
+        "}\n",
+    )
+    assert "js-ast-usestate-unused-in-jsx" not in _ids(res)
+
+
+def test_ast_js_usestate_returned_via_object_shorthand(tmp_path):
+    # A custom hook returns state via object-literal shorthand — tree-sitter
+    # types that node `shorthand_property_identifier`, not `identifier`.
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "function useThing() {\n"
+        "  const [flags, setFlags] = useState({});\n"
+        "  return { flags, setFlags };\n"
+        "}\n",
     )
     assert "js-ast-usestate-unused-in-jsx" not in _ids(res)
 

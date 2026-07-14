@@ -142,6 +142,42 @@ for _i, _a in enumerate(sys.argv):
 # plus entry points invoked from outside the scanned tree.
 NAME_SKIP = {"main", "cli", "run", "wrapper", "inner", "decorator"}
 
+# Inline suppression: put  # audit: ok  on the flagged line (same convention
+# as audit_phd.py / audit_runtime.py).
+SUPPRESS_RE = re.compile(r"#\s*audit:\s*ok")
+_line_cache: dict[Path, list[str]] = {}
+_SUPPRESS_SCAN_WINDOW = 25
+
+
+def _is_suppressed(p: Path, line: int) -> bool:
+    """Whether `line` (a def/class statement's start) carries `# audit: ok`.
+
+    A finding's line is where the `def`/`class` keyword sits, but a trailing
+    `# audit: ok` on a multi-line signature naturally lands on the line that
+    *closes* it (the `):`), not the opening line. Scan forward through the
+    unbalanced-paren signature to find it, bounded so the search never spills
+    past the signature into the function body.
+    """
+    lines = _line_cache.get(p)
+    if lines is None:
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            lines = []
+        _line_cache[p] = lines
+    if not (0 < line <= len(lines)):
+        return False
+    depth = 0
+    for i in range(line - 1, min(line - 1 + _SUPPRESS_SCAN_WINDOW, len(lines))):
+        text = lines[i]
+        if SUPPRESS_RE.search(text):
+            return True
+        depth += text.count("(") - text.count(")")
+        if depth <= 0:
+            break
+    return False
+
+
 CONFIG_FILES = [
     "limits.json",
     "model_rules.json",
@@ -332,8 +368,48 @@ def index_refs(trees):
     return refs
 
 
+# FastAPI/Starlette route + lifecycle decorator methods, matched on the
+# decorator's attribute name regardless of the object it hangs off — real
+# projects call the app object `app`, `api`, `router`, `v1_router`, etc.
+_ROUTE_DECORATOR_METHODS = {
+    "get",
+    "post",
+    "put",
+    "delete",
+    "patch",
+    "options",
+    "head",
+    "websocket",
+    "middleware",
+    "on_event",
+    "exception_handler",
+}
+
+
+def _is_alembic_migration(tree) -> bool:
+    """A module-level `revision = "..."` assignment is Alembic's own marker,
+    written into every migration file it generates. `upgrade`/`downgrade` in
+    such a file are never decorated — Alembic's runner imports the module by
+    path and calls them by name — so decorator-matching can't find them.
+
+    Newer Alembic templates annotate the marker (`revision: str = "..."`),
+    which parses as `ast.AnnAssign`, not `ast.Assign` — both forms count."""
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id == "revision":
+                    return True
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == "revision":
+                return True
+    return False
+
+
 def _collect_decorator_wired(defs):
-    """Find functions wired via FastAPI `@router.*` or Alembic upgrade/downgrade."""
+    """Find functions wired via FastAPI route/lifecycle decorators (any object
+    name, e.g. `@app.get`, `@router.post`, `@v1.middleware`) or Alembic
+    `upgrade`/`downgrade` (recognized by the `revision = ...` module marker,
+    since they carry no decorator to match on)."""
     import ast
 
     # Build {filepath: {def_name}} mapping
@@ -348,26 +424,26 @@ def _collect_decorator_wired(defs):
             tree = ast.parse(Path(fpath).read_text(encoding="utf-8"))
         except (OSError, SyntaxError, UnicodeDecodeError):
             continue
+        is_migration = _is_alembic_migration(tree)
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if node.name not in fnames:
                 continue
+            if is_migration and node.name in ("upgrade", "downgrade"):
+                wired.add(node.name)
+                continue
             for dec in node.decorator_list:
                 if isinstance(dec, ast.Attribute):
-                    obj = dec.value
-                    if isinstance(obj, ast.Name) and obj.id == "router":
+                    if dec.attr in _ROUTE_DECORATOR_METHODS:
                         wired.add(node.name)
                         break
                 elif isinstance(dec, ast.Call):
                     inner = dec.func
-                    if isinstance(inner, ast.Attribute):
-                        obj = inner.value
-                        if isinstance(obj, ast.Name) and obj.id == "router":
-                            wired.add(node.name)
-                            break
-                elif isinstance(dec, ast.Name):
-                    if dec.id in ("upgrade", "downgrade"):
+                    if (
+                        isinstance(inner, ast.Attribute)
+                        and inner.attr in _ROUTE_DECORATOR_METHODS
+                    ):
                         wired.add(node.name)
                         break
     return wired
@@ -1011,6 +1087,9 @@ def find_dead_modules(prod, prod_trees, test_trees):
     for p in sorted(prod):
         if p.stem in ("__init__", "__main__") or is_test(p) or p in main_guard:
             continue
+        tree = prod_trees.get(p)
+        if tree is not None and _is_alembic_migration(tree):
+            continue  # loaded by Alembic's own runner, not a Python import
         dotted = _module_dotted(p)
         if dotted in prod_dotted or p.stem in prod_leaves:
             continue  # a production module imports it → wired
@@ -1037,31 +1116,42 @@ def main():
 
     high_findings = 0
     medium_findings = 0
+    suppressed = 0
 
     dead, test_only = classify_defs(defs, refs_prod, refs_test, set(prod))
     _maybe_write_dead_json(dead, test_only)
     print("=" * 72)
     print("CHECK 1 - DEAD SYMBOLS (zero references anywhere; HIGH confidence)")
     print("=" * 72)
+    check1_any = False
     for name, sites, amb in sorted(dead):
         for p, qual, line, kind in sites:
+            if _is_suppressed(p, line):
+                suppressed += 1
+                continue
             tag = " [shared-name]" if amb else ""
             print(f"  {kind:8} {qual:42} {p.relative_to(ROOT)}:{line}{tag}")
             high_findings += 1
-    if not dead:
+            check1_any = True
+    if not check1_any:
         print("  none")
 
     print()
     print("=" * 72)
     print("CHECK 2 - TEST-ONLY SYMBOLS (built+tested, never wired; HIGH value)")
     print("=" * 72)
+    check2_any = False
     for name, sites, tfiles, amb in sorted(test_only):
         for p, qual, line, kind in sites:
+            if _is_suppressed(p, line):
+                suppressed += 1
+                continue
             tag = " [shared-name]" if amb else ""
             print(f"  {kind:8} {qual:42} {p.relative_to(ROOT)}:{line}{tag}")
             print(f"           tested by: {', '.join(tfiles)}")
             high_findings += 1
-    if not test_only:
+            check2_any = True
+    if not check2_any:
         print("  none")
 
     print()
@@ -1188,6 +1278,8 @@ def main():
     print(f"\n{'=' * 72}")
     print(f"SUMMARY  HIGH: {high_findings}   MEDIUM: {medium_findings}   INFO: 0")
     print(f"HIGH-confidence findings: {high_findings}")
+    if suppressed:
+        print(f"({suppressed} findings suppressed via `# audit: ok`)")
     if strict and high_findings:
         sys.exit(1)
 

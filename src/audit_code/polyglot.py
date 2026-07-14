@@ -236,7 +236,12 @@ _JS_FETCH_NO_SIGNAL = _rule(
     "fetch() without AbortSignal — request can hang forever, add a timeout",
     r"""(?x)
         \bfetch\s*\(
-        (?!.*\bsignal\b)
+        # `.` doesn't match newlines, so a plain `.*` lookahead is blind to
+        # `signal:` sitting on a later line of a multi-line options object —
+        # the common case once a formatter wraps the call. [\s\S] does match
+        # newlines; bounded to 400 chars so an unrelated `signal` elsewhere
+        # in a large file can't mask a real finding.
+        (?![\s\S]{0,400}?\bsignal\b)
     """,
 )
 _JS_TIMER_STRING = _rule(
@@ -1106,6 +1111,17 @@ def _read(path: Path, encoding: str) -> str:
         return ""
 
 
+def _is_inline_function_expr(text: str, start: int) -> bool:
+    """True when a `(` immediately precedes the definition keyword — a named
+    function EXPRESSION (IIFE or inline callback), as opposed to a statement.
+    `(function foo() {...})()` invokes `foo` by the surrounding parens, not by
+    name reference, so requiring a second occurrence of the name is wrong."""
+    i = start - 1
+    while i >= 0 and text[i] in " \t\n\r":
+        i -= 1
+    return i >= 0 and text[i] == "("
+
+
 def wiring_scan(root: Path, sources: dict[Path, str], spec: LangSpec) -> list[Finding]:
     """Flag definitions whose name is never referenced anywhere in the corpus."""
     if not spec.supports_wiring or not spec.defs:
@@ -1125,6 +1141,8 @@ def wiring_scan(root: Path, sources: dict[Path, str], spec: LangSpec) -> list[Fi
                 # Public/exported modifiers (export, pub) sit before the matched
                 # definition, so test the whole source line, not just the match.
                 if dp.public and dp.public.search(_line_at(text, m.start())):
+                    continue
+                if _is_inline_function_expr(text, m.start()):
                     continue
                 definitions.setdefault(name, []).append(
                     (path, _line_of(text, m.start()))
@@ -1150,12 +1168,22 @@ def wiring_scan(root: Path, sources: dict[Path, str], spec: LangSpec) -> list[Fi
     return findings
 
 
+# A local `const/let/var/function fetch = ...` binding shadows the global
+# fetch() API for the whole file — every bare `fetch(...)` call site then
+# invokes that local wrapper, not a network call, so fetch-specific rules
+# don't apply anywhere in such a file.
+_FETCH_SHADOW_RE = re.compile(r"\b(?:const|let|var|function\s*\*?)\s+fetch\b")
+
+
 def _apply_rules(
     root: Path, sources: dict[Path, str], rules: tuple[Rule, ...], lang: str
 ) -> list[Finding]:
     findings: list[Finding] = []
     for path, text in sources.items():
+        fetch_shadowed = _FETCH_SHADOW_RE.search(text) is not None
         for rule in rules:
+            if fetch_shadowed and rule.rule_id == "poly-js-fetch-no-signal":
+                continue
             for m in rule.pattern.finditer(text):
                 findings.append(
                     Finding(

@@ -57,6 +57,25 @@ None of Python's 49 PhD rules use these. They're all structural. Tree-sitter can
 
 ---
 
+## ✅ Completed this session (2026-07-14)
+
+Triggered by running `audit-code --min` against an external project
+(`ledger-core`/`ledger-ui` monorepo) and manually verifying every FAIL/WARN
+against the source. Four tool bugs found and fixed, all with regression tests:
+
+| Item | What | Impact |
+|---|---|---|
+| Wiring: FastAPI decorator detection was `router.*`-only | `_collect_decorator_wired` now matches route/lifecycle decorators (`get/post/put/delete/patch/options/head/websocket/middleware/on_event/exception_handler`) on **any** object name, not just literally `router` — `@app.get`, `@app.middleware` on the app object itself now count | Fixes false "dead" on `main.py`-style FastAPI apps that decorate `app` directly instead of an `APIRouter` |
+| Wiring: Alembic `upgrade`/`downgrade` detection never actually matched | It checked for a literal `@upgrade`/`@downgrade` **decorator**, which doesn't exist — real Alembic migrations call these by name, undecorated. New `_is_alembic_migration()` recognizes the `revision = ...` module marker Alembic writes into every migration file instead | Every migration's `upgrade`/`downgrade` was being flagged dead; now correctly recognized as framework-invoked |
+| Wiring: CHECK 10 flagged every Alembic migration file as a dead module | Same `revision = ...` marker now excludes migration files from `find_dead_modules`, alongside the existing `__init__`/`__main__`/test/`if __name__` guards | No more false "dead module" per migration file |
+| Wiring: `# audit: ok` suppression didn't exist in `audit_wiring.py` | `audit_phd.py`/`audit_runtime.py` have always supported inline `# audit: ok` suppression; wiring never did. Added `_is_suppressed()` (CHECK 1 + CHECK 2), scanning forward through a multi-line def/class signature so a trailing comment on the closing `):` line — the natural place to put it — is honored, not just the `def` line itself | On the external project, developers had already annotated 13 reviewed findings with `# audit: ok` that the tool was silently ignoring every run |
+| Polyglot wiring: named IIFEs flagged dead | `(function foo(){...})()` invokes `foo` via the surrounding parens, not a second name reference. `wiring_scan` now skips any definition whose keyword is immediately preceded by `(` (a function *expression*, not a statement) | Fixes false positives on the common `(function name() {...})();` self-invoking pattern |
+| JS-AST: `useState` "unused in JSX" required the read to be inside a JSX node | Rewrote `_check_usestate_unused_in_jsx` to flag state that's never *read* anywhere in the function body, not just inside JSX — catches both conditional early-return (`if (loading) return <Spinner/>` — the read is in the `if` test) and custom hooks that return state to a caller instead of rendering JSX (no JSX node exists in the function at all) | Was ~80% of a real project's JS-PHD MEDIUM noise (31 of 38 findings); both false-positive classes were already flagged as a known limitation below but not fixed until now |
+
+All five fixes are regression-tested (`tests/test_audit_wiring.py`, `tests/test_polyglot.py`) and pass the wiring/phd self-audit gate (0 HIGH) on `src/audit_code` itself.
+
+---
+
 ## ✅ Completed this session (2026-07-10)
 
 | Item | What | Impact |
@@ -91,10 +110,12 @@ Files build/pass with Vite, ESLint, and node just fine.
 | `&` in JSX text (`Match & Confirm`) | parse error | Use `and` instead of `&` |
 | Unicode arrows in JSX (`▾` / `▸`) | parse error | Use Unicode escapes `\u25BE` / `\u25B8` |
 | `<Collapse in={var}>` | parse error near `tingOpen}>` | Use spread: `<Collapse {...{in: var}}>` |
-| `useState` flags as "unused in JSX" | MEDIUM false positive | Variable used in conditional JSX — tree-sitter can't trace expressions |
+| `&` inside a plain string *nested in an object literal* inside a JSX attribute expression (e.g. `sx={cond ? ({ '& td': {...} }) : ({})}`) | parse error reported at the file's first line, unrelated to the actual `&` location | No clean workaround found yet — avoid `&`-keyed CSS-in-JS selectors inside conditional `sx` props, or hoist the object to a named constant outside the JSX |
+| ~~`useState` flags as "unused in JSX"~~ | ~~MEDIUM false positive~~ | ✅ fixed 2026-07-14 — `js-ast-usestate-unused-in-jsx` now checks for a read anywhere in the function body, not just inside a JSX node |
 
 Discovered 2026-07-09 wiring ledger-ui. Fixed 4 via text replacement, 1 via spread syntax.
-Remaining 21 MEDIUM are all useState/fetch false positives from these same root causes.
+The `&`-in-nested-string variant was found 2026-07-14 auditing a different project
+(`ledger-ui/src/views/Reports.jsx`) — same grammar-gap family, not yet a tool fix.
 
 Additionally, tree-sitter can't parse TypeScript generics in `.tsx` files:
 - `useState<Receipt[]>([])` — type parameter on hook
@@ -467,7 +488,7 @@ Source: [awesome-skills/code-review-skill](https://github.com/awesome-skills/cod
 | Python PhD rules | 55 |
 | Linter integrations | 23 (incl. opt-in MegaLinter) across 17 languages |
 | Graph languages | 10 (Python, JS/TS, Rust, Go, Java, C#, C/C++, Kotlin, Swift, PHP) |
-| Total tests | 708 |
+| Total tests | 720 |
 
 ---
 
