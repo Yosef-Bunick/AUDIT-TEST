@@ -56,5 +56,33 @@ Auto-detected per-language. Only run when the language is detected in the projec
 | HTML | htmlhint | `htmlhint` |
 | CSS/SCSS | stylelint | `stylelint` |
 | SQL | sqlfluff | `sqlfluff parse` (ANSI) |
+| PHP | phpstan | `phpstan analyse --no-progress --error-format=raw .` |
+| Ruby | rubocop | `rubocop --format progress .` |
+| Swift | swiftlint | `swiftlint lint --quiet` |
+| Kotlin | detekt | `detekt --input . --report txt` |
+| Dart | dart-analyze | `dart analyze .` |
+| Scala | scalafix | `scalafix --check` |
+| Elixir | credo | `mix credo --format oneline` |
+| Zig | zig-fmt | `zig fmt --check .` |
+| Lua | luacheck | `luacheck . --no-color` |
+| Haskell | hlint | `hlint .` |
+
+23 native linters across 17 languages. The first 13 rows have dedicated CLI
+flags (`--eslint`, `--clippy`, …); the newer ten (phpstan → hlint) have **no
+dedicated flag** — they auto-dispatch whenever their language is detected,
+and SKIP cleanly when the tool isn't installed.
 
 Language detection: marker files at project root OR any source file with the language's extension. Detection is gated on actual files present — `audit-test -s quality` won't fire clippy on a Python-only repo just because cargo happens to be installed on the box.
+
+---
+
+## MegaLinter (opt-in)
+
+`audit-test megalinter` / `--megalinter`. Runs the [MegaLinter](https://megalinter.io)
+umbrella scanner via `mega-linter-runner` (the official npm wrapper) or a bare
+`megalinter` binary, whichever is on PATH — flat text output, no reports
+directory.
+
+Thorough but slow, so it **never runs by default** — it's excluded from
+`audit-test`, `full`, and `min`; you must name it. SKIP if neither runner is
+installed.

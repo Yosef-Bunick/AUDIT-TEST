@@ -65,6 +65,34 @@ name = data["name"]               # C6: bare index — KeyError if "name" missin
 ```
 **Fix**: `data.get("name")` with a safe default, or validate the schema first.
 
+### C7 — shutil.rmtree() without try/except OSError [HIGH]
+`shutil.rmtree()` not wrapped in a try/except OSError — a permission error or
+locked file crashes the process mid-cleanup.
+```python
+shutil.rmtree(tmp_dir)          # C7: PermissionError crashes the run
+```
+**Fix**: wrap in `try: ... except OSError:` and log the failure.
+
+### C8 — except: continue silently discards errors [MEDIUM]
+A loop body whose exception handler is just `continue` — every failure is
+thrown away without a trace.
+```python
+for item in items:
+    try:
+        process(item)
+    except Exception:
+        continue                # C8: error vanishes, item silently skipped
+```
+**Fix**: log the exception (at minimum) before continuing.
+
+### C9 — float == comparison [MEDIUM]
+Equality comparison where either side is a float literal. Floating-point
+rounding makes `==` unreliable (`0.1 + 0.2 != 0.3`).
+```python
+if ratio == 0.3:                # C9: rounding breaks this
+```
+**Fix**: `math.isclose(ratio, 0.3)` or compare against a tolerance.
+
 ---
 
 ## Dimension 2 — Invariant coverage (test evidence)
@@ -88,6 +116,16 @@ A test function with zero `assert` statements, `pytest.raises`, `mock.assert_*`,
 ### T5 — monkeypatch/patch targets missing from target module [MEDIUM]
 `monkeypatch.setattr(module, "attr", ...)` or `mock.patch("module.attr")` targeting a name that doesn't exist at the module's top level. The patch silently does nothing — the test passes but isn't testing what you think. Resolves import aliases and `_imp()`/`import_module()` wrappers.
 **Fix**: verify the attribute actually exists in the target module.
+
+### T7 — mock.patch targets missing from the patched module [MEDIUM]
+`mock.patch("module.attr")` where `module` doesn't exist in production code,
+or `attr` isn't defined in that module. Complements T5: T5 resolves
+monkeypatch/setattr targets, T7 resolves string-path `mock.patch` targets.
+```python
+@mock.patch("app.services.fetch")   # T7 if app.services has no `fetch`
+def test_x(mock_fetch): ...
+```
+**Fix**: patch the name where it's actually looked up.
 
 ---
 
@@ -129,6 +167,20 @@ timeout = cfg["timeout"]           # F4: KeyError if "timeout" missing
 path = os.environ["API_KEY"]      # F4: KeyError if env var unset
 ```
 **Fix**: `cfg.get("timeout", default)` / `os.environ.get("API_KEY")`.
+
+### F5 — lock ordering inconsistency [MEDIUM]
+Two locks acquired in the order A→B in one function and B→A in another —
+the classic deadlock recipe.
+```python
+def f():
+    with lock_a:
+        with lock_b: ...        # A→B
+
+def g():
+    with lock_b:
+        with lock_a: ...        # F5: B→A — potential deadlock with f()
+```
+**Fix**: define one global lock-acquisition order and stick to it.
 
 ---
 
@@ -199,6 +251,38 @@ Monolithic units are hard to test, review, and reason about.
 
 ---
 
+## State & hygiene
+
+### G1 — hardcoded tuning knobs outside config [MEDIUM]
+A module-level `NAME = <number>` assignment (non-bool) outside the config
+layer — a tuning knob that should live in settings.
+```python
+MAX_RETRIES = 7                 # G1: move to settings
+```
+**Fix**: move the constant to the config/settings module.
+
+### G2 — module-level mutable state mutated from code [MEDIUM]
+A module-level `dict`/`list`/`set` that code mutates (`.append`, `[k] = v`,
+`.add`). Tagged `[unbounded growth?]` when nothing ever evicts from it.
+```python
+_CACHE = {}                     # module level
+
+def remember(k, v):
+    _CACHE[k] = v               # G2: shared mutable state, never evicted
+```
+**Fix**: encapsulate in a class, use an LRU cache, or document the eviction story.
+
+### G3 — __init__ returning non-None [HIGH]
+An `__init__` with a `return <value>` statement — raises `TypeError` the
+moment the class is instantiated.
+```python
+def __init__(self):
+    return self                 # G3: TypeError at instantiation
+```
+**Fix**: drop the return value (`return` alone is fine).
+
+---
+
 ## Security
 
 ### SEC1 — subprocess shell=True [HIGH]
@@ -220,6 +304,34 @@ pickle.load(untrusted_file)    # SEC2
 ### SEC3 — hardcoded credentials in source [HIGH]
 Token-shaped literals (`sk-...`, `ghp_...`, `xoxb-...`, `AKIA...`, `AIza...`) or variable names containing `api_key`/`secret`/`password`/`token` assigned to literal string values. R7 covers secrets reaching logs; SEC3 covers secrets living in the source tree.
 **Fix**: read from env vars or a secrets manager. Never commit credentials.
+
+### SEC4 — yaml.load() without SafeLoader [HIGH]
+`yaml.load()` with no `Loader=yaml.SafeLoader` — arbitrary object
+deserialization, an RCE risk on untrusted input.
+```python
+cfg = yaml.load(f)              # SEC4: can construct arbitrary objects
+```
+**Fix**: `yaml.safe_load(f)` or `yaml.load(f, Loader=yaml.SafeLoader)`.
+
+### SEC5 — SQLite engine without PRAGMA foreign_keys=ON [HIGH]
+A file that creates a SQLite engine (`create_engine`) but never sets
+`PRAGMA foreign_keys` — SQLite silently ignores FK constraints by default,
+so orphaned rows accumulate without errors.
+**Fix**: set `PRAGMA foreign_keys=ON` on every connection (e.g. an SQLAlchemy
+`connect` event listener).
+
+### SEC6 — SQL built with f-string/format/concat in execute() [HIGH]
+A string containing an SQL keyword, built via f-string, `%`, `.format()` or
+concatenation, passed to an `execute()`-style call — SQL injection.
+```python
+cur.execute(f"SELECT * FROM users WHERE id = {uid}")   # SEC6
+```
+**Fix**: parameterized queries — `execute("... WHERE id = ?", (uid,))`.
+
+### SEC7 — DEBUG = True in a settings module [MEDIUM]
+`DEBUG = True` at module level in a settings file — exposes stack traces and
+secrets if it reaches production.
+**Fix**: default to `False`; enable debug via an environment variable.
 
 ---
 
@@ -244,6 +356,43 @@ requests.get(url)              # B2: no timeout
 ### B3 — daemon threads [INFO]
 `Thread(daemon=True)`. Daemon threads are killed abruptly on process exit — no cleanup, no resource release. Need cooperative cancellation instead.
 **Fix**: use non-daemon threads with a stop event, or accept the risk.
+
+### B4 — tempfile.mktemp() / os.tempnam() [MEDIUM]
+Race-prone temp-file APIs: the name is generated first and the file created
+later, leaving a TOCTOU window an attacker can win.
+```python
+path = tempfile.mktemp()        # B4: race between name and creation
+```
+**Fix**: `tempfile.mkstemp()` or `tempfile.TemporaryFile()`.
+
+### B5 — assert used for validation [MEDIUM]
+`assert` guarding runtime input/state. Under `python -O` asserts are stripped
+— the validation silently vanishes. (Type-narrowing asserts are exempt.)
+```python
+assert user_id is not None, "missing user"   # B5: gone under -O
+```
+**Fix**: `raise ValueError/TypeError` for runtime validation; keep `assert`
+for internal invariants and tests.
+
+---
+
+## Logging
+
+### R9 — broken structured logging [HIGH]
+`log.info(...)` (or debug/warning/error) called with a keyword argument the
+stdlib logger doesn't accept — raises `TypeError` at runtime, i.e. the log
+line itself is a crash site.
+```python
+log.info("saved", user_id=uid)   # R9: TypeError — stdlib logging has no user_id kwarg
+```
+**Fix**: `log.info("saved", extra={"user_id": uid})` — or use a structured
+logging library end-to-end.
+
+### R10 — logging.basicConfig() called more than once [MEDIUM]
+`logging.basicConfig()` at multiple sites across the project — only the first
+call takes effect; the rest are silent no-ops, so half the configuration
+never applies.
+**Fix**: configure logging once, at the entry point.
 
 ---
 
@@ -304,7 +453,9 @@ def compute(x):               # DOC: no docstring
 
 | Severity | Count | Rules |
 |----------|-------|-------|
-| HIGH | 11 | C1, C2, SEC1, SEC2, SEC3, B1, F1, P1, E1, E2, D2 |
-| MEDIUM | 21 | C3, C4, C5, C6, F2, F3, F4, B2, G1, G2, D1, D3, D4, D5, P4, T1, T2, T3, T4, T5, DG1 |
+| HIGH | 17 | C1, C2, C7, SEC1, SEC2, SEC3, SEC4, SEC5, SEC6, B1, F1, R9, P1, E1, E2, D2, G3 |
+| MEDIUM | 29 | C3, C4, C5, C6, C8, C9, SEC7, B2, B4, B5, F2, F3, F4, F5, R10, G1, G2, D1, D3, D4, D5, P4, T1, T2, T3, T4, T5, T7, DG1 |
 | INFO | 6 | C2i, E1i, F2i, B3, P2, P3 |
 | INFO (summary) | 1 | DOC |
+
+(D1 counts once here but carries two checks, D1a and D1b.)
