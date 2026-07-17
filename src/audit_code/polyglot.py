@@ -280,6 +280,22 @@ _TS_ANY = _rule(
     "explicit `any` bypasses the type checker",
     r":\s*any\b|\bas\s+any\b",
 )
+_MONGO_INJECTION = _rule(
+    "poly-mongo-injection",
+    Severity.HIGH,
+    "MongoDB $where/$eval with dynamic input — NoSQL injection risk, "
+    "use $expr with parameterized aggregation instead",
+    r"\$(?:where|eval)\s*:\s*(?!\s*(?:\"\"|''|true|false|null|[\d.-]+\s*[},]))",  # skips empty/literal
+)
+_MONGO_INJECTION_PY = _rule(
+    "poly-mongo-injection",
+    Severity.HIGH,
+    "MongoDB $where/$eval/db.eval in Python — NoSQL injection risk",
+    r"""(?ix)
+        (?:\$where|\$eval|db\.eval|database\.eval|\.eval\s*\()
+        \s*[:=]\s*
+    """,
+)
 _TS_ENUM_NUMERIC = _rule(
     "poly-ts-enum-numeric",
     Severity.INFO,
@@ -323,6 +339,7 @@ _JS = LangSpec(
         _TS_ANY,
         _TS_ENUM_NUMERIC,
         _JS_REACTIVE_DESTRUCTURE,
+        _MONGO_INJECTION,
     ),
     runtime_rules=(_CONSOLE_LOG, _UNBOUNDED),
 )
@@ -904,6 +921,13 @@ _SQL = LangSpec(
             "DROP TABLE / DROP DATABASE — irreversible data loss",
             r"(?i)\bdrop\s+(table|database)\b",
         ),
+        _rule(
+            "poly-sql-exec-injection",
+            Severity.HIGH,
+            "EXEC / sp_executesql with dynamic SQL — T-SQL injection risk, "
+            "use sp_executesql with parameterized arguments",
+            r"(?i)\b(?:EXEC\s*\(|sp_executesql\s+@?\w+|EXECUTE\s+@?\w+)",
+        ),
     ),
     runtime_rules=(
         _rule(
@@ -936,6 +960,36 @@ _CSS = LangSpec(
     ),
 )
 
+_YAML = LangSpec(
+    language="yaml",
+    extensions=(".yaml", ".yml"),
+    supports_wiring=False,
+    phd_rules=(
+        _rule(
+            "poly-k8s-run-as-root",
+            Severity.HIGH,
+            "container may run as root — set securityContext.runAsNonRoot: true "
+            "and specify runAsUser",
+            r"(?s)containers:\s*[-\s]\s*name:.*?(?=containers:|$)"
+            r"(?!.*?securityContext:\s*\n\s*runAsNonRoot:\s*true)",
+        ),
+        _rule(
+            "poly-k8s-latest-tag",
+            Severity.MEDIUM,
+            "container image uses :latest tag or no tag — "
+            "non-reproducible deploys, pin to a digest or versioned tag",
+            r"image:\s*[^\s:]+\s*(?:$|:(?:latest\s*$|$))",
+            re.M,
+        ),
+        _rule(
+            "poly-k8s-privileged",
+            Severity.HIGH,
+            "privileged: true — container has full host access",
+            r"privileged:\s*true",
+        ),
+    ),
+)
+
 _ALL_SPECS = (
     _JS,
     _GO,
@@ -955,6 +1009,7 @@ _ALL_SPECS = (
     _ELIXIR,
     _SQL,
     _CSS,
+    _YAML,
 )
 
 # Lookup by language name (plus the common `typescript`/`c` aliases).

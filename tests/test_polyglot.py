@@ -1309,3 +1309,137 @@ def test_phd_output_notes_skipped_ast_rules(tmp_path, monkeypatch):
 def test_phd_output_has_no_skip_note_when_ast_ran(tmp_path):
     res = _run(tmp_path, "phd", "javascript", "a.js", "const x = 1;\n")
     assert "AST rules not run" not in res.stdout
+
+
+# ── MongoDB NoSQL injection (poly-js mongo-injection) ────────────────────
+
+
+def test_poly_mongo_injection_flags_where_in_js(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "db.collection('users').find({$where: 'this.age > ' + userInput});\n",
+    )
+    assert "poly-mongo-injection" in _ids(res), "JS $where should be flagged"
+
+
+def test_poly_mongo_injection_flags_eval_in_js(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "db.collection('users').find({$eval: userCode});\n",
+    )
+    assert "poly-mongo-injection" in _ids(res), "JS $eval should be flagged"
+
+
+def test_poly_mongo_injection_skips_empty_where(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "javascript",
+        "a.js",
+        "db.collection('users').find({$where: ''});\n",
+    )
+    assert "poly-mongo-injection" not in _ids(res), "empty $where should skip"
+
+
+# ── T-SQL EXEC / sp_executesql injection (poly-sql-exec-injection) ───────
+
+
+def test_poly_sql_exec_flags_exec_paren(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "sql",
+        "query.sql",
+        "EXEC('SELECT * FROM users WHERE id = ' + @userId)\n",
+    )
+    assert "poly-sql-exec-injection" in _ids(res), "EXEC() should be flagged"
+
+
+def test_poly_sql_exec_flags_sp_executesql(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "sql",
+        "query.sql",
+        "sp_executesql N'SELECT * FROM users'\n",
+    )
+    assert "poly-sql-exec-injection" in _ids(res), "sp_executesql should be flagged"
+
+
+def test_poly_sql_exec_skips_normal_select(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "sql",
+        "query.sql",
+        "SELECT * FROM users WHERE active = 1;\n",
+    )
+    assert "poly-sql-exec-injection" not in _ids(res), "normal SELECT should skip"
+
+
+# ── YAML / K8s rules ─────────────────────────────────────────────────────
+
+
+def test_poly_k8s_privileged_flags(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "yaml",
+        "deploy.yaml",
+        "spec:\n  containers:\n  - name: app\n    image: nginx\n"
+        "    securityContext:\n      privileged: true\n",
+    )
+    assert "poly-k8s-privileged" in _ids(res), "privileged: true should be flagged"
+
+
+def test_poly_k8s_latest_tag_flags(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "yaml",
+        "deploy.yaml",
+        "spec:\n  containers:\n  - name: app\n    image: nginx:latest\n",
+    )
+    assert "poly-k8s-latest-tag" in _ids(res), ":latest tag should be flagged"
+
+
+def test_poly_k8s_latest_tag_flags_no_tag(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "yaml",
+        "deploy.yaml",
+        "spec:\n  containers:\n  - name: app\n    image: nginx\n",
+    )
+    assert "poly-k8s-latest-tag" in _ids(
+        res
+    ), "no tag (defaults to latest) should be flagged"
+
+
+def test_poly_k8s_latest_tag_skips_versioned(tmp_path):
+    res = _run(
+        tmp_path,
+        "phd",
+        "yaml",
+        "deploy.yaml",
+        "spec:\n  containers:\n  - name: app\n    image: nginx:1.25.0\n",
+    )
+    assert "poly-k8s-latest-tag" not in _ids(res), "versioned tag should skip"
+
+
+def test_yaml_wiring_not_supported(tmp_path):
+    res = _run(
+        tmp_path,
+        "wiring",
+        "yaml",
+        "deploy.yaml",
+        "key: value\n",
+    )
+    # YAML has supports_wiring=False → returns empty findings = PASS
+    assert res.findings == [], "YAML wiring should return no findings"

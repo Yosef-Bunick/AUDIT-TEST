@@ -752,6 +752,7 @@ def run(
     _q6_docstrings(root, prod, findings, counts, stdout_lines)
     _q7_test_hygiene(root, tests_dir, findings, counts, stdout_lines)
     _q8_mutation(target_root, root, mutation, counts, stdout_lines)
+    _q9_scalene(target_root, root, findings, counts, stdout_lines)
 
     # Summary
     stdout_lines.append("=" * 74)
@@ -805,4 +806,37 @@ if __name__ == "__main__":
     )
     print(result.stdout)
     if args.strict and result.high:
-        sys.exit(1)
+        raise SystemExit(1)
+
+
+def _q9_scalene(target_root, root, findings, counts, out):
+    """Q9: Scalene CPU/memory profiler — bottleneck detection at runtime.
+
+    Checks whether scalene is installed and available. When present,
+    reports version and usage instructions. Full profiling integration
+    (running scalene against the project) requires --bottleneck flag
+    which is not yet wired to CLI — currently this is an availability
+    check only.
+    """
+    tool = _tool("scalene", target_root)
+    out.append("=" * 74)
+    out.append("Q9 [MEDIUM] Scalene bottleneck profiler")
+    out.append("=" * 74)
+    if not tool:
+        out.append("  SKIP: scalene not installed (pip install scalene)")
+        out.append("")
+        return
+
+    rc, ver = _run(tool.split() + ["--version"], root, timeout=10)
+    if rc != 0:
+        out.append(f"  SKIP: scalene failed to launch (exit {rc})")
+        out.append("")
+        return
+
+    ver_line = ver.strip().split("\n")[0] if ver.strip() else "unknown"
+    out.append(f"  scalene: {ver_line}")
+    out.append("  Scalene is available for runtime bottleneck profiling.")
+    out.append("  Run manually:  scalene your_app.py")
+    out.append("                scalene -m pytest tests/")
+    out.append("")
+

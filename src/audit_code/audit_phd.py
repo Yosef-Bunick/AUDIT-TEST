@@ -169,11 +169,13 @@ KNOB_NAME_RE = re.compile(
 SECRET_TOKEN_RE = re.compile(
     r"sk-[A-Za-z0-9_\-]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|"
     r"github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9\-]{10,}|"
-    r"AIza[0-9A-Za-z_\-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"AIza[0-9A-Za-z_\-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----|"
+    r"okta_[A-Za-z0-9_\-]{20,}"  # Okta API tokens
 )
 SECRET_ASSIGN_RE = re.compile(
-    r"""(?i)\b\w*(?:api_?key|secret|password|passwd|auth_token|access_token)"""
-    r"""\w*["']?\s*[:=]\s*["']([^"']{8,})["']"""
+    r"""(?i)\b\w*(?:api_?key|secret|password|passwd|auth_token|access_token|"""
+    r"""okta_token|okta_secret|okta_client_id)\w*"""
+    r"""["']?\s*[:=]\s*["']([^"']{8,})["']"""
 )
 SECRET_PLACEHOLDER_RE = re.compile(
     r"(?i)your|xxx|<|\{|\benv\b|dummy|example|placeholder|fake|test|sample|"
@@ -1097,6 +1099,116 @@ def main():
                 f"secret-named binding with a literal value: {m.group(0)[:48]!r}",
             )
 
+        # LANG1 — ChatOpenAI / AzureChatOpenAI without temperature=.
+        # LLM calls without explicit temperature default to the model's
+        # built-in default (often 0.7-1.0), making outputs nondeterministic.
+        # Flag as MEDIUM — deliberate creativity is valid, but absence is
+        # worth surfacing.
+        LLM_CTOR_NAMES = {
+            "ChatOpenAI",
+            "AzureChatOpenAI",
+            "ChatAnthropic",
+            "ChatGoogleGenerativeAI",
+            "ChatVertexAI",
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            cn = call_name(node)
+            if cn not in LLM_CTOR_NAMES:
+                continue
+            if any(kw.arg == "temperature" for kw in node.keywords):
+                continue
+            sink.add(
+                "LANG1",
+                f,
+                node.lineno,
+                f"{cn}() instantiated without temperature= — "
+                "outputs will be nondeterministic in production. "
+                "Set temperature=0 for deterministic/auditable responses, "
+                "or suppress with # audit: ok if creativity is intentional",
+            )
+
+        # BOTTLE1 — await in a for/while loop. Sequential awaits kill
+        # throughput when the calls are independent. Use asyncio.gather()
+        # for parallelism unless ordering is required.
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.For, ast.While)):
+                continue
+            # Walk loop body looking for Await
+            has_await = False
+            for child in ast.walk(node):
+                if isinstance(child, ast.Await):
+                    has_await = True
+                    break
+            if not has_await:
+                continue
+            # Exclude loops where the await is inside asyncio.gather or
+            # as_completed — those ARE the parallel pattern.
+            gather_found = False
+            for child in ast.walk(node):
+                if (
+                    isinstance(child, ast.Call)
+                    and call_name(child) in ("gather", "as_completed")
+                    and receiver_name(child) in ("asyncio", "")
+                ):
+                    gather_found = True
+                    break
+            if gather_found:
+                continue
+            sink.add(
+                "BOTTLE1",
+                f,
+                node.lineno,
+                "await inside a loop — sequential async calls kill "
+                "throughput. Use asyncio.gather() for independent tasks, "
+                "or suppress with # audit: ok if ordering is required",
+            )
+
+        # BOTTLE2 — sync blocking I/O inside async def. These block the
+        # event loop, starving other coroutines. Use async equivalents
+        # (aiofiles, httpx.AsyncClient, motor for MongoDB, etc.).
+        BLOCKING_CALLS = {
+            "time.sleep",
+            "sleep",
+            "requests.get",
+            "requests.post",
+            "requests.put",
+            "requests.delete",
+            "requests.patch",
+            "requests.request",
+            "urllib.request.urlopen",
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            # Walk the async function body looking for sync blocking calls
+            for child in ast.walk(node):
+                if not isinstance(child, ast.Call):
+                    continue
+                cn = call_name(child)
+                rcv = receiver_name(child)
+                full = f"{rcv}.{cn}" if rcv else cn
+                if full not in BLOCKING_CALLS and cn not in BLOCKING_CALLS:
+                    continue
+                # Exclude time.sleep(0) — deliberate yield pattern
+                if cn in ("sleep", "time.sleep") and child.args:
+                    arg0 = child.args[0]
+                    if (
+                        isinstance(arg0, ast.Constant)
+                        and isinstance(arg0.value, (int, float))
+                        and arg0.value == 0
+                    ):
+                        continue
+                sink.add(
+                    "BOTTLE2",
+                    f,
+                    child.lineno,
+                    f"sync blocking call {full}() inside async def "
+                    f"{node.name}() — blocks the event loop. Use async "
+                    "equivalent (httpx.AsyncClient, aiofiles, motor)",
+                )
+
         # DG1 - god functions / classes; god files below (cross-file)
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1238,7 +1350,18 @@ def main():
         # SEC6 — SQL statement built with f-string/%/.format/concat passed
         # to execute(). Only strings containing an SQL keyword flag, so a
         # generic .execute() method on a non-DB object stays quiet.
-        SQL_WORDS = ("select ", "insert ", "update ", "delete ", "create ", "drop ")
+        SQL_WORDS = (
+            "select ",
+            "insert ",
+            "update ",
+            "delete ",
+            "create ",
+            "drop ",
+            "exec ",
+            "sp_executesql",
+            "execute ",
+            "merge ",
+        )  # T-SQL additions
 
         def _sqlish(s):
             low = s.lower()
@@ -1332,6 +1455,125 @@ def main():
                         st.lineno,
                         "DEBUG = True in a settings module — exposes stack "
                         "traces and secrets if it reaches production",
+                    )
+
+        # SEC8 — MongoDB $where/$eval/db.eval with dynamic input — NoSQL
+        # injection. Same class of bug as SQL injection, different database.
+        MONGO_EVAL_CALLS = {
+            "find",
+            "find_one",
+            "findOne",
+            "aggregate",
+            "update_one",
+            "update_many",
+            "delete_one",
+            "delete_many",
+            "eval",
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr not in MONGO_EVAL_CALLS and node.func.attr != "eval":
+                continue
+            # Check for $where or $eval in keywords/args
+            for kw in node.keywords:
+                if kw.arg in ("$where", "$eval", "where", "eval"):
+                    sink.add(
+                        "SEC8",
+                        f,
+                        node.lineno,
+                        f"MongoDB {kw.arg}= dynamic input — NoSQL injection "
+                        "risk, use $expr with parameterized aggregation",
+                    )
+            for arg in node.args:
+                if isinstance(arg, ast.Dict):
+                    for k in arg.keys:
+                        if (
+                            isinstance(k, ast.Constant)
+                            and isinstance(k.value, str)
+                            and k.value in ("$where", "$eval")
+                        ):
+                            sink.add(
+                                "SEC8",
+                                f,
+                                node.lineno,
+                                f"MongoDB {k.value} with dynamic input — "
+                                "NoSQL injection risk",
+                            )
+                            break
+            # Direct eval() on database/collection object
+            rcv = receiver_name(node)
+            if node.func.attr == "eval" and rcv in ("db", "database", "collection", ""):
+                sink.add(
+                    "SEC8",
+                    f,
+                    node.lineno,
+                    "db.eval() with dynamic input — NoSQL injection risk, "
+                    "use $expr with parameterized aggregation",
+                )
+
+        # AUTH1 — FastAPI route without auth guard. Flags @router.get/post/...
+        # or @app.get/... decorators that don't include
+        # dependencies=[Depends(...)] or a project-configured guard pattern.
+        # Skips files in test directories and files marked with
+        # "no-auth" in their stem or path.
+        AUTH_ROUTE_METHODS = {
+            "get",
+            "post",
+            "put",
+            "delete",
+            "patch",
+            "options",
+            "head",
+            "websocket",
+        }
+        if not is_test(p) and "no_auth" not in stem and "no-auth" not in stem:
+            for node in ast.walk(tree):
+                if not (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))):
+                    continue
+                for dec in node.decorator_list:
+                    if not isinstance(dec, ast.Call):
+                        continue
+                    # Match @router.method or @app.method
+                    if not isinstance(dec.func, ast.Attribute):
+                        continue
+                    if dec.func.attr not in AUTH_ROUTE_METHODS:
+                        continue
+                    rcv = receiver_name(dec)
+                    if rcv not in ("", "router", "app", "api", "bp", "blueprint"):
+                        continue
+                    # Check for dependencies keyword with any auth guard
+                    has_guard = False
+                    for kw in dec.keywords:
+                        if kw.arg == "dependencies":
+                            has_guard = True
+                            break
+                    if has_guard:
+                        continue
+                    # Also check if the function itself has a depends in its
+                    # signature (FastAPI can inject via function params)
+                    for fn_arg in node.args.args + node.args.kwonlyargs:
+                        if fn_arg.arg in (
+                            "current_user",
+                            "user",
+                            "token",
+                            "auth",
+                            "api_key",
+                            "access_token",
+                        ):
+                            has_guard = True
+                            break
+                    if has_guard:
+                        continue
+                    sink.add(
+                        "AUTH1",
+                        f,
+                        node.lineno,
+                        f"@{rcv or 'router'}.{dec.func.attr} route without "
+                        "auth guard — add dependencies=[Depends(get_current_user)] "
+                        "or suppress with # audit: ok if public endpoint",
                     )
 
     # ── cross-file checks ────────────────────────────────────────────────
@@ -1815,10 +2057,27 @@ def main():
             "SQL built with f-string/format/concat in execute() (injection)",
         ),
         (
+            "SEC8",
+            "HIGH",
+            "MongoDB $where/$eval/db.eval — NoSQL injection risk",
+        ),
+        (
             "SEC7",
             "MEDIUM",
             "DEBUG = True in a settings module (data leak in production)",
         ),
+        ("AUTH1", "HIGH", "FastAPI route without auth guard (no Depends in decorator)"),
+        (
+            "LANG1",
+            "MEDIUM",
+            "LLM constructor without temperature= (nondeterministic output)",
+        ),
+        (
+            "BOTTLE1",
+            "MEDIUM",
+            "await in loop — sequential async kills throughput, use asyncio.gather()",
+        ),
+        ("BOTTLE2", "HIGH", "sync blocking I/O inside async def — blocks event loop"),
         ("B1", "HIGH", "mutable default arguments (Dim 1 - shared-state bugs)"),
         ("B4", "MEDIUM", "tempfile.mktemp/os.tempnam — race-prone (TOCTOU)"),
         ("B5", "MEDIUM", "assert used for validation (stripped under python -O)"),
