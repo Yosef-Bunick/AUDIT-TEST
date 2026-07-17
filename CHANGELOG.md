@@ -1,6 +1,22 @@
 # Changelog
 
-## 0.4.0 (current)
+## 0.4.1 (current)
+
+### Added
+- `tree-sitter-cpp` shipped as a core dependency — the C/C++ deep AST pass
+  now works on a plain `pip install audit-test` (previously it always SKIPped
+  because the grammar was never installed)
+
+### Docs
+- README, `docs/phd.md`, `docs/integrations.md` and `docs/skill.md` brought up
+  to v0.4 reality: all 52 phd rule IDs documented (C7–C9, T7, F5, G1–G3,
+  SEC4–SEC7, B4–B5, R9–R10 were missing), 23 native linters + MegaLinter
+  listed, 21 languages / two-tier polyglot engine described, wiring
+  `# audit: ok` support and the `--json`/`--sarif`/`--junit` report flags
+  documented
+- Fixed stale `__version__` in `audit_code/__init__.py` (0.3.9 → 0.4.1)
+
+## 0.4.0
 
 Cumulative since 0.1.0 — see git history for per-release detail.
 
