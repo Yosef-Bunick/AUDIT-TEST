@@ -1,6 +1,6 @@
 # ruff: noqa: S101, S603
 """Tests for new Python PhD rules: C7, C8, C9, SEC4, B4, G3, T7, F5,
-SEC6, SEC7, B5, R10."""
+SEC6, SEC7, B5, R10, SEC8 (MongoDB), AUTH1 (FastAPI auth guard)."""
 
 import json
 import os
@@ -559,3 +559,250 @@ def test_r9_skips_valid_kwargs(tmp_path):
         tmp_path, "log=None\ndef f(): log.info('msg', extra={'key': 'val'})\n"
     )
     assert not data.get("R9"), "log.info with extra= should skip"
+
+
+# ── SEC8: MongoDB $where/$eval NoSQL injection ────────────────────────────
+
+
+def test_sec8_flags_mongo_where_in_dict(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "def f(coll, user_input): coll.find({'$where': user_input})\n",
+    )
+    assert data.get("SEC8"), "MongoDB $where in dict should be flagged"
+
+
+def test_sec8_flags_mongo_eval_keyword(tmp_path):
+    # Note: $where as keyword is invalid Python syntax (can't call
+    # coll.find($where=...)). Test the dict form which IS valid.
+    data = _run_phd(
+        tmp_path,
+        "def f(coll, code): coll.find({'$where': code})\n",
+    )
+    assert data.get("SEC8"), "MongoDB $where in dict should be flagged"
+
+
+def test_sec8_flags_db_eval(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "def f(db, code): db.eval(code)\n",
+    )
+    assert data.get("SEC8"), "db.eval() should be flagged"
+
+
+def test_sec8_skips_normal_find(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "def f(coll, name): coll.find({'name': name})\n",
+    )
+    assert not data.get("SEC8"), "normal MongoDB find should skip"
+
+
+# ── AUTH1: FastAPI route without auth guard ────────────────────────────────
+
+
+def test_auth1_flags_unguarded_route(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "from fastapi import APIRouter\n"
+        "router = APIRouter()\n"
+        "@router.get('/items')\n"
+        "def get_items():\n    return []\n",
+    )
+    assert data.get("AUTH1"), "route without auth guard should be flagged"
+
+
+def test_auth1_flags_app_route(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.post('/items')\n"
+        "def create_item():\n    return {}\n",
+    )
+    assert data.get("AUTH1"), "app route without auth guard should be flagged"
+
+
+def test_auth1_skips_guarded_route(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "from fastapi import APIRouter, Depends\n"
+        "router = APIRouter()\n"
+        "def get_current_user(): pass\n"
+        "@router.get('/items', dependencies=[Depends(get_current_user)])\n"
+        "def get_items():\n    return []\n",
+    )
+    assert not data.get("AUTH1"), "route with Depends should skip"
+
+
+def test_auth1_skips_function_param_injection(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "from fastapi import APIRouter\n"
+        "router = APIRouter()\n"
+        "@router.get('/items')\n"
+        "def get_items(current_user = None):\n    return []\n",
+    )
+    assert not data.get("AUTH1"), "route with current_user param should skip"
+
+
+def test_auth1_skips_test_file(tmp_path):
+    # File must be inside a tests/ directory for is_test() to trigger
+    data = _run_phd(
+        tmp_path,
+        "",  # empty mod.py
+        extra_files={
+            "tests/test_routes.py": (
+                "from fastapi import APIRouter\n"
+                "router = APIRouter()\n"
+                "@router.get('/items')\n"
+                "def get_items():\n    return []\n"
+            ),
+        },
+    )
+    assert not data.get("AUTH1"), "test dir routes should skip"
+
+
+# ── SEC6 extended: T-SQL keywords (EXEC, sp_executesql) ──────────────────
+
+
+def test_sec6_flags_tsql_exec(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "def f(cur, proc): cur.execute(f'EXEC {proc}')\n",
+    )
+    assert data.get("SEC6"), "f-string EXEC in execute() should be flagged"
+
+
+def test_sec6_flags_tsql_sp_executesql(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "def f(cur, sql): cur.execute(f'sp_executesql {sql}')\n",
+    )
+    assert data.get("SEC6"), "f-string sp_executesql should be flagged"
+
+
+# ── LANG1: LLM constructor without temperature= ──────────────────────────
+
+
+def test_lang1_flags_chatopenai_no_temperature(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "from langchain_openai import ChatOpenAI\n" "llm = ChatOpenAI(model='gpt-4')\n",
+    )
+    assert data.get("LANG1"), "ChatOpenAI without temperature should be flagged"
+
+
+def test_lang1_skips_with_temperature(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "from langchain_openai import ChatOpenAI\n"
+        "llm = ChatOpenAI(model='gpt-4', temperature=0)\n",
+    )
+    assert not data.get("LANG1"), "ChatOpenAI with temperature= should skip"
+
+
+def test_lang1_flags_azure_openai(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "from langchain_openai import AzureChatOpenAI\n"
+        "llm = AzureChatOpenAI(deployment_name='gpt-4')\n",
+    )
+    assert data.get("LANG1"), "AzureChatOpenAI without temperature should be flagged"
+
+
+# ── SEC3 extended: Okta token shapes ─────────────────────────────────────
+
+
+def test_sec3_flags_okta_token_shape(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        'OKTA_TOKEN = "okta_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"\n',
+    )
+    assert data.get("SEC3"), "okta_ token shape should be flagged"
+
+
+def test_sec3_flags_okta_secret_var(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        'okta_client_secret = "abc123def456ghi789"\n',
+    )
+    assert data.get("SEC3"), "okta_client_secret variable should be flagged"
+
+
+# ── BOTTLE1: await in loop ───────────────────────────────────────────────
+
+
+def test_bottle1_flags_await_in_for_loop(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "import asyncio\n"
+        "async def f(items):\n"
+        "    for item in items:\n"
+        "        await process(item)\n",
+    )
+    assert data.get("BOTTLE1"), "await in for loop should be flagged"
+
+
+def test_bottle1_flags_await_in_while_loop(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "import asyncio\n"
+        "async def f():\n"
+        "    while True:\n"
+        "        await process()\n",
+    )
+    assert data.get("BOTTLE1"), "await in while loop should be flagged"
+
+
+def test_bottle1_skips_asyncio_gather(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "import asyncio\n"
+        "async def f(items):\n"
+        "    results = await asyncio.gather(*[process(i) for i in items])\n",
+    )
+    assert not data.get("BOTTLE1"), "asyncio.gather in loop should skip"
+
+
+def test_bottle1_skips_no_await(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "def f(items):\n" "    for item in items:\n" "        result = process(item)\n",
+    )
+    assert not data.get("BOTTLE1"), "sync loop without await should skip"
+
+
+# ── BOTTLE2: sync I/O in async def ───────────────────────────────────────
+
+
+def test_bottle2_flags_requests_in_async(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "import requests\n" "async def fetch(url):\n" "    return requests.get(url)\n",
+    )
+    assert data.get("BOTTLE2"), "requests.get in async def should be flagged"
+
+
+def test_bottle2_flags_time_sleep_in_async(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "import time\n" "async def wait():\n" "    time.sleep(1)\n",
+    )
+    assert data.get("BOTTLE2"), "time.sleep in async def should be flagged"
+
+
+def test_bottle2_skips_sleep_zero(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "import time\n" "async def yield_coro():\n" "    time.sleep(0)\n",
+    )
+    assert not data.get("BOTTLE2"), "time.sleep(0) should skip"
+
+
+def test_bottle2_skips_sync_def(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "import requests\n" "def fetch(url):\n" "    return requests.get(url)\n",
+    )
+    assert not data.get("BOTTLE2"), "requests.get in sync def should skip"
