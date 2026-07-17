@@ -3,8 +3,8 @@
 **One command. One policy. One fail-closed verdict.**
 
 Polyglot code auditor — syntax, wiring, PHD static analysis, runtime checks,
-test suite health, quality gates, and 13+ native linters across 9 languages.
-All in one shot. Zero config needed.
+test suite health, quality gates, deep tree-sitter AST rules, and 23 native
+linters across 21 languages. All in one shot. Zero config needed.
 
 <p align="center">
   <a href="#install"><img src="https://img.shields.io/badge/%F0%9F%9B%A0%EF%B8%8F-Install-f7a800" alt="Install"></a>
@@ -21,7 +21,9 @@ pip install audit-test
 ```
 
 This pulls the core Python linters automatically (**ruff, bandit, mypy, black,
-coverage**) — so the Python audit works out of the box, no separate setup.
+coverage**) plus the tree-sitter grammars behind the deep polyglot AST rules
+(JS/TS, Rust, Go, Java, C#, Kotlin, Swift, PHP) — so the Python audit **and**
+the deep multi-language rules work out of the box, no separate setup.
 
 Want the heavier / niche scanners too (semgrep, pip-audit CVE scan, mutmut
 mutation testing, sqlfluff)?
@@ -105,9 +107,16 @@ All forms work — bare words, `-short`, or `--long`:
 | `fast` | | `--fast` | skip slow checks |
 | `verbose` | `-v` | `--verbose` | full detail output |
 | `min` | | `--min` | fast: wiring + phd + quality + deps |
+| `strict` | | `--strict` | exit non-zero on any FAIL/CRASH (default) |
+| `report` | | `--report-only` | print findings but always exit 0 |
 | **Options** |
 | | `-p` | `--path PATH` | project directory |
 | `skip` | `-s` | `--skip MODULES` | skip modules |
+| | | `--json FILE` | write JSON report to FILE |
+| | | `--sarif FILE` | write SARIF report (GitHub code scanning) |
+| | | `--junit FILE` | write JUnit XML report to FILE |
+| | | `--profile NAME` | enable a project-specific audit profile |
+| | | `--config FILE` | path to `audit-code.toml` |
 | | `-H` | `--help` | show help |
 | **Core modules** |
 | `phd` `p` | | `--phd` | PHD static audit |
@@ -125,6 +134,7 @@ All forms work — bare words, `-short`, or `--long`:
 | **Security integrations** |
 | `semgrep` | | `--semgrep` | semgrep (structural) |
 | `bandit` | | `--bandit` | bandit (Python security) |
+| `megalinter` | | `--megalinter` | MegaLinter umbrella scan (opt-in, slow) |
 | **Language integrations** — SKIP if tool not installed |
 | `eslint` | | `--eslint` | ESLint (JS/TS) |
 | `prettier` | | `--prettier` | Prettier (JS/TS/CSS) |
@@ -139,6 +149,11 @@ All forms work — bare words, `-short`, or `--long`:
 | `cppcheck` | | `--cppcheck` | cppcheck (C++) |
 | `htmlhint` | | `--htmlhint` | HTMLHint (HTML) |
 | `stylelint` | | `--stylelint` | Stylelint (CSS/SCSS) |
+
+The newer per-language linters — **PHPStan, RuboCop, SwiftLint, detekt,
+dart analyze, Scalafix, Credo, zig fmt, Luacheck, HLint** — have no dedicated
+flag: they run automatically whenever their language is detected in the tree,
+and SKIP cleanly when the tool isn't installed.
 
 ### Focus groups
 
@@ -270,6 +285,10 @@ audit-test surgeon replace-cross <src> <s>:<e> <dest> <s>:<e>  # overwrite dest 
 audit-test surgeon port <src> <dest> <function>                # move a function + its imports
 ```
 
+`port` finds a function in `<src>` (a file or a project directory), copies it
+into `<dest>`, and brings along only the imports it actually references that
+`<dest>` is missing.
+
 ### Context scanner
 
 Quickly grab lines around a finding for context before fixing:
@@ -285,7 +304,7 @@ audit-test scan file.py 42 --json        # machine-readable output
 
 ### Dependency graph
 
-Trace import relationships — same vybe as scan:
+Trace import relationships — same vibe as scan:
 
 ```powershell
 audit-test graph cli.py              # ±2 steps (default)
@@ -295,9 +314,9 @@ audit-test graph cli.py +5 -3         # 5 forward, 3 back
 audit-test graph cli.py +5 -3 --json  # machine-readable for agents
 ```
 
-`port` finds a function in `<src>` (a file or a project directory), copies it
-into `<dest>`, and brings along only the imports it actually references that
-`<dest>` is missing.
+The graph walks **10 languages** — Python, JS/TS, Rust, Go, Java, Kotlin,
+Swift, PHP, C#, and C/C++ — and also reports **cross-language edges**:
+subprocess calls and FFI bindings that jump from one language into another.
 
 ### Speed
 
@@ -338,13 +357,13 @@ python run_all_audits.py       # orchestrate all five into one report
 
 | Audit | Question it answers | Full rules |
 |---|---|---|
-| wiring | **Is it connected?** Dead symbols, test-only code, config key drift | [docs/wiring.md](docs/wiring.md) |
-| phd | **Does it meet the bar?** Exception discipline, security patterns, state bugs | [docs/phd.md](docs/phd.md) — 37 rules |
+| wiring | **Is it connected?** Dead symbols, test-only code, config key drift — framework-aware (FastAPI routes, Alembic migrations) | [docs/wiring.md](docs/wiring.md) |
+| phd | **Does it meet the bar?** Exception discipline, security patterns, state bugs | [docs/phd.md](docs/phd.md) — 55 rules |
 | runtime | **Will it hang or crash?** Unbounded loops, missing timeouts, secrets in logs | [docs/runtime.md](docs/runtime.md) — 13 checks |
 | suite | **Is the test suite healthy?** Runs pytest, classifies real vs pollution failures | [docs/suite.md](docs/suite.md) |
 | quality | **External gates + execution truth.** Black, ruff, mypy, CVE scan, coverage | [docs/quality.md](docs/quality.md) — Q0-Q8 |
 | encoding | **Is the source the right encoding?** Strict-decodes every text file (UTF-8 by default; configurable) | `#encoding` + `check` |
-| integrations | **External tools.** semgrep, bandit, +14 native linters across 9 languages | [docs/integrations.md](docs/integrations.md) |
+| integrations | **External tools.** semgrep, bandit, opt-in MegaLinter, +23 native linters across 17 languages | [docs/integrations.md](docs/integrations.md) |
 
 > **wiring, phd and runtime aren't Python-only.** Python gets the full
 > `ast`-based rules; every other language gets a **portable, dependency-free
@@ -353,11 +372,12 @@ python run_all_audits.py       # orchestrate all five into one report
 
 ## Languages
 
-Auto-detects 9 languages (marker files or source files anywhere in the tree,
-root included). Python runs the full five-audit stack. Every other language
-gets a **real** syntax check, its native test suite, **and a portable
-wiring/phd/runtime pass** — and when a required toolchain is missing, the
-result is an honest `SKIP` with the install hint, never a fake pass:
+Auto-detects **21 languages** through 19 adapters (marker files or source
+files anywhere in the tree, root included). Python runs the full five-audit
+stack. Every other language gets a **real** syntax check, its native test
+suite, **and a wiring/phd/runtime pass** — and when a required toolchain is
+missing, the result is an honest `SKIP` with the install hint, never a fake
+pass:
 
 | Language | Detection | Syntax check | Test suite | Semantic¹ |
 |---|---|---|---|---|
@@ -368,31 +388,50 @@ result is an honest `SKIP` with the install hint, never a fake pass:
 | Rust | `Cargo.toml`, `*.rs` | `cargo check` | `cargo test` | ✓ |
 | C# | `*.cs` | `dotnet build` (SKIP if restore fails) | `dotnet test` | ✓ |
 | C / C++ | `CMakeLists.txt`, `Makefile`, `*.c(pp)` | `gcc/clang -fsyntax-only` or `cl /Zs` per unit | `ctest` (if `build/` exists) | phd/runtime¹ |
+| Kotlin | `*.kt`, `*.kts` | `kotlinc` | `gradlew test` | ✓ |
+| Swift | `*.swift` | `swiftc -typecheck` | `swift test` | ✓ |
+| PHP | `*.php`, `*.phtml` | `php -l` | `vendor/bin/phpunit` | ✓ |
+| Ruby | `*.rb` | `ruby -c` | `rake` | ✓ |
+| Dart | `*.dart` | `dart analyze` | `dart test` | ✓ |
+| Scala | `*.scala` | `scalac` | `sbt test` | ✓ |
+| Elixir | `*.ex`, `*.exs` | `elixirc` | `mix test` | ✓ |
+| Zig | `*.zig` | `zig ast-check` | `zig test` | ✓ |
+| Lua | `*.lua` | `luac -p` | — | ✓ |
+| Haskell | `*.hs`, `*.lhs` | `stack`/`cabal` dry-run, else `ghc -fno-code` | `stack test` / `cabal test` | phd/runtime¹ |
 | HTML / CSS | `*.html`, `*.css`, `*.scss` | tag-balance / brace-balance (structural, stdlib) | — | — |
-| SQL | `*.sql` | `sqlfluff parse` (ANSI; SKIP if not installed) | — | — |
+| SQL | `*.sql` | `sqlfluff parse` (ANSI; SKIP if not installed) | — | phd/runtime¹ |
 
-¹ Portable wiring/phd/runtime via the [Polyglot audits](#polyglot-audits)
-engine. C/C++ gets phd + runtime but not wiring (linkage/headers make
-dead-symbol detection unreliable).
+¹ Wiring/phd/runtime via the [Polyglot audits](#polyglot-audits) engine —
+portable rules for every language, plus a **deep tree-sitter AST pass** for
+JS/TS, Rust, Go, Java, C#, Kotlin, Swift, PHP and C/C++. C/C++, Haskell and
+SQL get phd + runtime but not wiring (linkage/exports make dead-symbol
+detection unreliable there).
 
 Restrict detection with `[audit] languages = ["python", "go"]` in
 `audit-code.toml` (empty list = auto-detect all).
 
 ### Polyglot audits
 
-The deep audits go multi-language without a parser per language. Python keeps
-its full `ast` rules; every other language gets a **dependency-free, portable
-subset** driven by a per-language `LangSpec` (file extensions, how a definition
-looks, which rules apply). Detection is by extension in a single tree walk, so a
-language needs **no toolchain and no adapter** — pure-Kotlin or pure-Elixir
-repos are scanned out of the box.
+The deep audits go multi-language in two tiers. Python keeps its full
+55-rule `ast` engine; every other language gets a **dependency-free, portable
+rule set** (76 phd + 32 runtime regex rules) driven by a per-language
+`LangSpec` (file extensions, how a definition looks, which rules apply).
+Detection is by extension in a single tree walk, so a language needs **no
+toolchain** — pure-Kotlin or pure-Elixir repos are scanned out of the box.
 
-**17 languages** carry rules today:
+On top of that, nine languages get a **deep tree-sitter AST pass** — 72
+structural rules that regex can't reach: `useState` state that's never read,
+empty catch blocks found by node type (not brace-guessing), unsafe casts,
+`goto`, `using namespace` in headers, god functions, and more. The grammars
+ship with the package; if one is missing at runtime, that language's AST pass
+reports an explicit `SKIP` note — never a silent downgrade.
 
-| | Languages |
+**20 languages** carry rules today:
+
+| Tier | Languages |
 |---|---|
-| Full adapter (syntax + tests + semantic) | JavaScript/TypeScript, Java, Go, Rust, C#, C/C++ |
-| Semantic-only (wiring/phd/runtime) | Kotlin, Swift, Dart, Ruby, PHP, Zig, Scala, Lua, Haskell, Elixir, SQL |
+| Deep AST (tree-sitter) + portable rules | JS/TS, Rust, Go, Java, C#, Kotlin, Swift, PHP, C/C++ |
+| Portable rules (wiring/phd/runtime) | Ruby, Dart, Scala, Elixir, Zig, Lua, Haskell, SQL, CSS/SCSS |
 
 What each portable audit looks for:
 
@@ -402,12 +441,15 @@ What each portable audit looks for:
   (Disabled for C/C++, Haskell and SQL, where linkage/exports make it unreliable.)
 - **phd** — swallowed errors (empty `catch`), catch-all handlers, dynamic code
   execution (`eval`, `new Function`, `Code.eval`, `load`), hardcoded secrets,
-  Go `if err != nil {}`, Rust `.unwrap()`/`panic!`, Swift `try!`/`fatalError`,
-  Kotlin `!!`, unsafe C (`gets`/`strcpy`), Haskell `unsafePerformIO`, SQL
+  JS loose equality and React-hooks misuse, Go `if err != nil {}` and
+  mutex-by-value, Rust `.unwrap()`/`panic!` and blocking I/O in async code,
+  Java `String ==`, C# sync-over-async, Swift `try!`/`fatalError`/force-unwrapped
+  optionals, Kotlin `!!`/`GlobalScope`, unsafe C (`gets`/`strcpy`, unchecked
+  `malloc`), PHP SQL string interpolation, Haskell `unsafePerformIO`, SQL
   `DELETE`/`UPDATE` without a `WHERE`.
 - **runtime** — debug leftovers (`console.log`, `System.out.println`,
   `var_dump`, `IO.inspect`), debt markers (TODO/FIXME/XXX/HACK), unbounded loops,
-  `SELECT *`.
+  `SELECT *`, CSS `!important` abuse and z-index escalation.
 
 Findings surface per language as `javascript-wiring`, `go-phd`, `rust-runtime`,
 `kotlin-phd`, etc. A language with no rule set returns an honest `SKIP`. The
@@ -485,9 +527,9 @@ Declare the project's expected source encoding with `#encoding` — used by
 Add `# audit: ok` to the end of any line to suppress a finding on that line.
 Use sparingly — every suppression is counted in the summary.
 
-Applies to `phd` and `runtime` audits (the two modules that carry Sink/SUPPRESS_RE
-machinery). The `wiring` audit has no suppression mechanism — it reports all
-findings unconditionally.
+Applies to the `phd`, `runtime` **and** `wiring` audits. For wiring, the
+annotation is honored on the `def`/`class` line — or on the closing `):` line
+of a multi-line signature, the natural place to put it.
 
 Only suppress when the audit is **wrong**: env-var-gated code paths, CLI entry
 points that can't be covered, and parse-time helpers wiring can't detect through
@@ -527,6 +569,19 @@ Grep the codebase for the current list, or see [ROADMAP.md](ROADMAP.md#needs-fix
 | C / C++ | `clang-tidy`, `cppcheck` |
 | HTML / CSS | `htmlhint`, `stylelint` |
 | SQL | `sqlfluff` |
+| PHP | `phpstan` |
+| Ruby | `rubocop` |
+| Swift | `swiftlint` |
+| Kotlin | `detekt` |
+| Dart | `dart analyze` |
+| Scala | `scalafix` |
+| Elixir | `credo` |
+| Zig | `zig fmt` |
+| Lua | `luacheck` |
+| Haskell | `hlint` |
+
+Plus **MegaLinter** as an opt-in umbrella scan (`audit-test megalinter`) —
+thorough but slow, so it never runs by default.
 
 ## License
 
