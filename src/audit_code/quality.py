@@ -738,22 +738,59 @@ def run(
     stdout_lines.append("")
 
     _q0_syntax(root, prod, test_files, findings, counts, stdout_lines)
-    _q1_black(target_root, root, fix, findings, counts, stdout_lines)
 
-    _q2_ruff(target_root, root, fix, findings, counts, stdout_lines)
+    # Run independent external tools in parallel (black, ruff, mypy, CVE).
+    # Each tool writes to its own isolated buffer to avoid jumbled output.
+    # Merged in deterministic order after all complete.
+    from concurrent.futures import ThreadPoolExecutor
 
-    _q3_mypy(target_root, root, strict_mypy, findings, counts, stdout_lines)
-    _q4_cves(target_root, root, findings, counts, stdout_lines)
+    def _run_tool(fn, *args):
+        """Run a Q-function with isolated output buffers."""
+        local_findings = []
+        local_counts = {"HIGH": 0, "MEDIUM": 0, "INFO": 0}
+        local_out = []
+        fn(*args, local_findings, local_counts, local_out)
+        return local_findings, local_counts, local_out
 
-    _q5_never_executed(
-        root, tests_dir, fast, pytest_extra, shared_cov, findings, counts, stdout_lines
-    )
+    tool_jobs = [
+        (_q1_black, target_root, root, fix),
+        (_q2_ruff, target_root, root, fix),
+    ]
+    if not fast:
+        tool_jobs.extend(
+            [
+                (_q3_mypy, target_root, root, strict_mypy),
+                (_q4_cves, target_root, root),
+            ]
+        )
+
+    # Submit all, collect results, merge in submission order
+    with ThreadPoolExecutor(max_workers=len(tool_jobs)) as ex:
+        job_futures = [(fn, ex.submit(_run_tool, fn, *args)) for fn, *args in tool_jobs]
+        for fn, fut in job_futures:
+            loc_find, loc_cnt, loc_out = fut.result()
+            findings.extend(loc_find)
+            for k in counts:
+                counts[k] += loc_cnt[k]
+            stdout_lines.extend(loc_out)
+
+    if not fast:
+        _q5_never_executed(
+            root,
+            tests_dir,
+            fast,
+            pytest_extra,
+            shared_cov,
+            findings,
+            counts,
+            stdout_lines,
+        )
+        _q8_mutation(target_root, root, mutation, counts, stdout_lines)
 
     _q6_docstrings(root, prod, findings, counts, stdout_lines)
     _q7_test_hygiene(root, tests_dir, findings, counts, stdout_lines)
-    _q8_mutation(target_root, root, mutation, counts, stdout_lines)
-    _q9_scalene(target_root, root, findings, counts, stdout_lines)
 
+    _q9_scalene(target_root, root, findings, counts, stdout_lines)
     # Summary
     stdout_lines.append("=" * 74)
     stdout_lines.append(
@@ -839,4 +876,3 @@ def _q9_scalene(target_root, root, findings, counts, out):
     out.append("  Run manually:  scalene your_app.py")
     out.append("                scalene -m pytest tests/")
     out.append("")
-

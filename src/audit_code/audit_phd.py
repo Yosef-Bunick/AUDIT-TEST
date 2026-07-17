@@ -520,7 +520,8 @@ def main():
     for p, tree in trees.items():
         f = rel(p)
         txt = prod[p]
-        for node in ast.walk(tree):
+        nodes = list(ast.walk(tree))  # cache — reused by 20+ checks below
+        for node in nodes:
 
             # C1 / C2 / C3 - exception discipline
             if isinstance(node, ast.ExceptHandler):
@@ -825,7 +826,7 @@ def main():
         # ── file-level checks ────────────────────────────────────────────
 
         # F1 - locks never acquired (same file)
-        for node in ast.walk(tree):
+        for node in nodes:
             if (
                 isinstance(node, ast.Assign)
                 and isinstance(node.value, ast.Call)
@@ -859,7 +860,7 @@ def main():
 
         # F5 - lock ordering (same function, different branches)
         # Detects: branch A acquires X then Y, branch B acquires Y then X → deadlock
-        for node in ast.walk(tree):
+        for node in nodes:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             # Collect lock acquisition sequences per branch
@@ -911,7 +912,7 @@ def main():
             ("debug", "info", "warning", "warn", "error", "critical", "exception")
         )
         VALID_KWARGS = frozenset(("exc_info", "stack_info", "stacklevel", "extra"))
-        for node in ast.walk(tree):
+        for node in nodes:
             if not isinstance(node, ast.Call):
                 continue
             cn = call_name(node)
@@ -976,7 +977,7 @@ def main():
                     break
 
         # C5 - TOCTOU (unguarded only)
-        for node in ast.walk(tree):
+        for node in nodes:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 exists_at = {}
                 uses = []
@@ -1000,7 +1001,7 @@ def main():
         # C6 - LLM-parsed dicts indexed bare. The model was only ASKED to
         # return the field; a missing/hallucinated key is a KeyError mid-run.
         c6_seen = set()  # dedupe: same-line repeats + nested-def double-walk
-        for node in ast.walk(tree):
+        for node in nodes:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             tainted = set()
@@ -1111,7 +1112,7 @@ def main():
             "ChatGoogleGenerativeAI",
             "ChatVertexAI",
         }
-        for node in ast.walk(tree):
+        for node in nodes:
             if not isinstance(node, ast.Call):
                 continue
             cn = call_name(node)
@@ -1132,7 +1133,7 @@ def main():
         # BOTTLE1 — await in a for/while loop. Sequential awaits kill
         # throughput when the calls are independent. Use asyncio.gather()
         # for parallelism unless ordering is required.
-        for node in ast.walk(tree):
+        for node in nodes:
             if not isinstance(node, (ast.For, ast.While)):
                 continue
             # Walk loop body looking for Await
@@ -1179,7 +1180,7 @@ def main():
             "requests.request",
             "urllib.request.urlopen",
         }
-        for node in ast.walk(tree):
+        for node in nodes:
             if not isinstance(node, ast.AsyncFunctionDef):
                 continue
             # Walk the async function body looking for sync blocking calls
@@ -1210,7 +1211,7 @@ def main():
                 )
 
         # DG1 - god functions / classes; god files below (cross-file)
-        for node in ast.walk(tree):
+        for node in nodes:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 span = (node.end_lineno or node.lineno) - node.lineno
                 if span > 120:
@@ -1237,7 +1238,7 @@ def main():
             sink.add("DG1", f, 1, f"file is {n_lines} lines - god file")
 
         # C7 — rmtree without OSError guard
-        for node in ast.walk(tree):
+        for node in nodes:
             if isinstance(node, ast.Call) and call_name(node) == "rmtree":
                 if receiver_name(node) in ("shutil", ""):
                     if not guarded_against_oserror(node):
@@ -1258,7 +1259,7 @@ def main():
                         )
 
         # C8 — except: continue (silently discards errors)
-        for node in ast.walk(tree):
+        for node in nodes:
             if isinstance(node, ast.ExceptHandler):
                 if len(node.body) == 1 and isinstance(node.body[0], ast.Continue):
                     # Only flag bare except or except Exception (not specific types)
@@ -1274,7 +1275,7 @@ def main():
                         )
 
         # C9 — float equality comparison
-        for node in ast.walk(tree):
+        for node in nodes:
             if isinstance(node, ast.Compare):
                 if any(isinstance(op, (ast.Eq, ast.NotEq)) for op in node.ops):
                     has_float = any(
@@ -1291,7 +1292,7 @@ def main():
                         )
 
         # SEC4 — yaml.load() without SafeLoader
-        for node in ast.walk(tree):
+        for node in nodes:
             if isinstance(node, ast.Call) and call_name(node) == "load":
                 if receiver_name(node) in ("yaml", ""):
                     has_safeloader = any(
@@ -1310,7 +1311,7 @@ def main():
                         )
 
         # B4 — tempfile.mktemp() / os.tempnam() (TOCTOU race)
-        for node in ast.walk(tree):
+        for node in nodes:
             if isinstance(node, ast.Call):
                 cn = call_name(node)
                 if cn == "mktemp" and receiver_name(node) in ("tempfile", ""):
@@ -1331,7 +1332,7 @@ def main():
                     )
 
         # G3 — __init__ returning non-None (TypeError at runtime)
-        for node in ast.walk(tree):
+        for node in nodes:
             if isinstance(node, ast.FunctionDef) and node.name == "__init__":
                 for sub in ast.walk(node):
                     if isinstance(sub, ast.Return) and sub.value is not None:
@@ -1392,7 +1393,7 @@ def main():
                 return _sqlish(arg.func.value.value)
             return False
 
-        for node in ast.walk(tree):
+        for node in nodes:
             if (
                 isinstance(node, ast.Call)
                 and call_name(node) in ("execute", "executemany", "executescript")
@@ -1410,7 +1411,7 @@ def main():
         # B5 — assert used for runtime validation. python -O strips asserts,
         # so the check silently vanishes in optimized runs. Type-narrowing
         # idioms (assert isinstance, assert x is not None) are accepted.
-        for node in ast.walk(tree):
+        for node in nodes:
             if not isinstance(node, ast.Assert):
                 continue
             t = node.test
@@ -1470,7 +1471,7 @@ def main():
             "delete_many",
             "eval",
         }
-        for node in ast.walk(tree):
+        for node in nodes:
             if not isinstance(node, ast.Call):
                 continue
             if not isinstance(node.func, ast.Attribute):
@@ -1530,7 +1531,7 @@ def main():
             "websocket",
         }
         if not is_test(p) and "no_auth" not in stem and "no-auth" not in stem:
-            for node in ast.walk(tree):
+            for node in nodes:
                 if not (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))):
                     continue
                 for dec in node.decorator_list:
@@ -1582,7 +1583,8 @@ def main():
     # takes effect, every later one is silently ignored.
     basicconfig_sites = []
     for p, tree in trees.items():
-        for node in ast.walk(tree):
+        nodes = list(ast.walk(tree))
+        for node in nodes:
             if (
                 isinstance(node, ast.Call)
                 and call_name(node) == "basicConfig"
@@ -1602,6 +1604,7 @@ def main():
     # D1 - duplicate module-level functions
     by_name = collections.defaultdict(list)
     for p, tree in trees.items():
+        nodes = list(ast.walk(tree))
         for st in tree.body:
             if isinstance(
                 st, (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -1621,6 +1624,7 @@ def main():
     _body_hashes: dict[str, list[tuple[str, int, str]]] = collections.defaultdict(list)
 
     for p, tree in trees.items():
+        nodes = list(ast.walk(tree))
         for st in tree.body:
             if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if st.name.startswith("__"):
@@ -1653,6 +1657,7 @@ def main():
     mods = {modname(p): p for p in trees}
     edges = collections.defaultdict(set)
     for p, tree in trees.items():
+        nodes = list(ast.walk(tree))
         src = modname(p)
         for st in tree.body:
             if isinstance(st, ast.ImportFrom) and st.module and st.module in mods:
@@ -1714,6 +1719,7 @@ def main():
     # D3 - flat sys.path-dependent imports
     submods = {p.stem: modname(p) for p in trees if len(p.relative_to(ROOT).parts) > 1}
     for p, tree in trees.items():
+        nodes = list(ast.walk(tree))
         for st in tree.body:
             if isinstance(st, ast.Import):
                 for a in st.names:
@@ -1792,7 +1798,7 @@ def main():
     seen_defs = set()
     for p, tree in sorted(trees.items()):
         f = rel(p)
-        for node in ast.walk(tree):
+        for node in nodes:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             nm = node.name
@@ -1849,6 +1855,7 @@ def main():
     # __getattr__ skipped (dynamic attrs); non-module targets skipped.
     prod_bindings, prod_dynamic = {}, set()
     for p, tree in trees.items():
+        nodes = list(ast.walk(tree))
         mn = modname(p)
         binds = set()
         for st in tree.body:
@@ -2035,7 +2042,8 @@ def main():
     doc_missing = collections.Counter()
     doc_total = collections.Counter()
     for p, tree in trees.items():
-        for node in ast.walk(tree):
+        nodes = list(ast.walk(tree))
+        for node in nodes:
             if isinstance(
                 node, (ast.FunctionDef, ast.AsyncFunctionDef)
             ) and not node.name.startswith("_"):

@@ -14,7 +14,7 @@
 | Task | Command | When |
 |------|---------|------|
 | Full gate | `audit-test` | pre-push |
-| Fast local gate | `audit-test min` (wiring + phd + quality + deps) | dev |
+| Fast local gate | `audit-test min` (wiring + phd + quality fast + deps, ~15s) | dev |
 | Change gate vs HEAD | `audit-test gate` (`gate fast` skips mutation) | pre-commit |
 | Fix formatting | `audit-test fix` | dev |
 | One module | `audit-test <module> v` | dev |
@@ -75,14 +75,19 @@ C#, C/C++) and reports cross-language edges (subprocess calls, FFI bindings).
 - Push from Windows (WSL lacks GitHub creds)
 - PyPI: push `v*` tag, version must match pyproject.toml + `__init__.py`
 
-### Coverage (v0.4.0)
+### Coverage (v0.5.0)
 - 21 languages / 19 adapters; Python runs the full five-audit stack
-- Python phd: 55 `ast` rules; polyglot: 76 phd + 32 runtime regex rules
+- Python phd: 60+ `ast` rules (incl. SEC8 MongoDB, AUTH1 FastAPI, LANG1 temp,
+  BOTTLE1 await-in-loop, BOTTLE2 sync-in-async); polyglot: 80+ phd + 32 runtime
+  regex rules (incl. K8s/YAML, Mongo injection, T-SQL exec)
 - Deep tree-sitter AST pass (72 rules) for JS/TS, Rust, Go, Java, C#, Kotlin,
   Swift, PHP, C/C++ — grammars are core deps in pyproject.toml
 - 23 native linters; the 10 newer ones (phpstan, rubocop, swiftlint, detekt,
   dart-analyze, scalafix, credo, zig-fmt, luacheck, hlint) have **no CLI
   flag** — they auto-dispatch per detected language
+- **v0.5 speed**: direct imports (no subprocess wrappers), AST walk caching,
+  parallel quality tools (black∥ruff∥mypy∥pip-audit), background suite + linters,
+  pytest-xdist auto-detect. 60% faster than v0.4.
 
 ### CLI Module Flags
 - Modules: `syntax` `python` `encoding` `wiring` `phd` `runtime` `suite`
@@ -110,4 +115,18 @@ C#, C/C++) and reports cross-language edges (subprocess calls, FFI bindings).
   `):` line of a multi-line signature
 - **Missing tree-sitter grammar → explicit SKIP note; broken pack → raise** —
   never silently degrade; follow this pattern when adding AST languages
-- **xdist slows subprocess-bound suites** — do NOT add xdist to audit-test
+- **xdist**: `pytest-xdist` is auto-detected and used for parallel test execution
+  (`pytest -n auto`). Falls back to sequential if absent. Added to `audit-test[all]`
+  optional deps.
+- **Use the right edit tool** — `write_file` rewrites the entire file (use when
+  starting fresh or doing major rewrites). `patch` does find-and-replace (use for
+  targeted edits). `surgeon insert/replace/copy/port` does line-level surgery.
+  Don't use `write_file` for a single-function append — `surgeon insert` or
+  `patch` with end-of-file anchor is correct.
+- **ROOT caching in direct imports** — `audit_phd.py`/`audit_wiring.py` set ROOT
+  at import time. When calling `main()` in-process, explicitly set
+  `audit_xxx.ROOT = target_root.resolve()` before the call.
+- **Do NOT share output buffers between threads** — parallel quality tools need
+  isolated per-tool buffers. Merging after avoids jumbled output order.
+- **ProcessPool overhead > benefit at <500 files** — worker spawn + pickle cost
+  beats the parallel gain for small projects. AST walk caching is zero-cost.
