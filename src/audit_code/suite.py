@@ -59,7 +59,15 @@ def _run_pytest(
         ]
         env = dict(os.environ, COVERAGE_FILE=str(cov_file))
     else:
-        cmd = [sys.executable, "-m", "pytest", target, *PYTEST_ARGS]
+        xdist_args = []
+        try:
+            import importlib.util
+
+            if importlib.util.find_spec("xdist") is not None:
+                xdist_args = ["-n", "auto"]
+        except (ImportError, ValueError):
+            pass
+        cmd = [sys.executable, "-m", "pytest", target, *PYTEST_ARGS, *xdist_args]
         env = None
     proc = subprocess.run(
         cmd,

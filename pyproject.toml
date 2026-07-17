@@ -41,6 +41,7 @@ all = [
     "pip-audit>=2.7",  # dependency CVE scan (Q4)
     "mutmut>=2.4",     # mutation testing (Q8, opt-in)
     "sqlfluff>=3.0",   # SQL lint (only if you audit .sql)
+    "pytest-xdist>=3", # parallel test execution (suite module)
 ]
 
 [project.scripts]

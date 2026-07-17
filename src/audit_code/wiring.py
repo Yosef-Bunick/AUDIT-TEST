@@ -1,20 +1,18 @@
 """wiring.py — deep wiring audit (dead symbols, test-only, config drift).
 
-Answers "is it connected?" via AST analysis:
-  CHECK 1 - DEAD SYMBOLS (zero references anywhere)
-  CHECK 2 - TEST-ONLY SYMBOLS (referenced only from tests/)
-  CHECK 3 - DEAD CONFIG KEYS (quoted-exact matching)
-  CHECK 4 - CONFIG-KEY FLOW (definers vs consumers)
-  CHECK 7 - SHADOWED CONFIG (key in multiple files)
-  CHECK 8 - TRANSITIVELY DEAD CONFIG
-  CHECK 9 - STDOUT PROTOCOL (__EVENT__/__RESULT__ markers)
+Answers "is it connected?" via AST analysis.
+Now calls audit_wiring.main() directly in run() — eliminates Python
+startup overhead. collect_dead_symbols() still subprocesses for the
+profiler (lower priority path).
 """
 
+import io
 import json
 import re
 import subprocess
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from audit_code.audit_shared import utf8_subprocess_env
@@ -30,28 +28,36 @@ SUMMARY_RE = re.compile(r"SUMMARY\s+HIGH:\s*(\d+)\s+MEDIUM:\s*(\d+)\s+INFO:\s*(\
 
 
 def run(target_root: Path, strict: bool = True) -> AuditResult:
-    """Run the wiring audit against a target project."""
+    """Run the wiring audit against a target project.
+
+    Calls audit_wiring.main() directly instead of subprocess.
+    """
+    from audit_code import audit_wiring  # late import — heavy
+
+    # Reset ROOT — module-level state persists across calls in-process
+    audit_wiring.ROOT = target_root.resolve()
+
+    saved_argv = sys.argv[:]
+    buf = io.StringIO()
     try:
-        proc = subprocess.run(
-            [sys.executable, str(_SCRIPT), "--path", str(target_root)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=300,
-            cwd=str(target_root),
-            env=utf8_subprocess_env(),
-        )
-    except subprocess.TimeoutExpired:
+        sys.argv = [
+            "audit_wiring",
+            "--path",
+            str(target_root),
+        ]
+
+        with redirect_stdout(buf):
+            audit_wiring.main()
+    except Exception as exc:
         return AuditResult(
             audit_id="wiring",
             status=AuditStatus.CRASH,
-            stderr="timed out after 300s",
+            stderr=f"audit_wiring.main() raised: {exc}",
         )
+    finally:
+        sys.argv = saved_argv
 
-    out = proc.stdout or ""
-    err = proc.stderr or ""
-
+    out = buf.getvalue()
     high = med = info = 0
     m = SUMMARY_RE.search(out)
     if m:
@@ -61,7 +67,7 @@ def run(target_root: Path, strict: bool = True) -> AuditResult:
         if m:
             high = int(m.group(1))
 
-    crashed = proc.returncode not in (0, 1) or (
+    crashed = (
         high == 0
         and med == 0
         and info == 0
@@ -74,7 +80,6 @@ def run(target_root: Path, strict: bool = True) -> AuditResult:
             audit_id="wiring",
             status=AuditStatus.CRASH,
             stdout=out,
-            stderr=err,
         )
 
     status = (
@@ -90,7 +95,7 @@ def run(target_root: Path, strict: bool = True) -> AuditResult:
         medium=med,
         info=info,
         stdout=out,
-        stderr=err,
+        completed=True,
     )
 
 
@@ -125,8 +130,13 @@ def collect_dead_symbols(target_root: Path) -> list[dict]:
             env=utf8_subprocess_env(),
         )
         data = json.loads(tmp_path.read_text(encoding="utf-8"))
-        return data.get("dead", [])
-    except (subprocess.TimeoutExpired, OSError, ValueError):
-        return []
+        # audit_wiring writes {"dead": [...], "test_only": [...]} —
+        # consumers want just the dead list
+        if isinstance(data, dict) and "dead" in data:
+            return data["dead"]
+        return data
     finally:
-        tmp_path.unlink(missing_ok=True)
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass

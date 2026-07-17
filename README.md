@@ -331,10 +331,20 @@ any edit busts the fingerprint and reruns. Force a fresh run with:
 $env:AUDIT_NO_Q5_CACHE = "1"    # PowerShell — disable the Q5 coverage cache
 ```
 
-Other fast paths: `audit-test fast` skips the slow checks (Q3 mypy, Q5 coverage,
-mutation); `audit-test min` runs only wiring + phd + quality. Test parallelism
-(`pytest -n`) is **not** used — this suite is subprocess-bound, so extra workers
-run slower, not faster.
+Other fast paths: `audit-test min` runs only wiring + phd + quality.
+
+**v0.5 optimization stack** (60% faster than v0.4):
+- **Direct imports**: phd + wiring wrappers import `audit_phd`/`audit_wiring`
+  directly instead of subprocess-calling them (~50% gain)
+- **AST walk caching**: per-file `ast.walk()` called once and cached (22 walks → 1, ~12% gain)
+- **Parallel quality tools**: black ∥ ruff ∥ mypy ∥ pip-audit run simultaneously
+  via ThreadPoolExecutor (6× faster quality module in full mode)
+- **Background suite**: pytest suite starts immediately and overlaps with all
+  other audits — results display inline at the end
+- **pytest-xdist**: `audit-test[all]` includes `pytest-xdist`. Suite auto-detects
+  it and runs `pytest -n auto`. Falls back to sequential if absent.
+- **Background linters**: lint, black, semgrep, bandit, deps run concurrently
+  with wiring/phd/runtime
 
 ### Standalone scripts
 

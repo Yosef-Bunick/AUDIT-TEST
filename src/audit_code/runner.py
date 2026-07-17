@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from audit_code import (
@@ -96,6 +97,19 @@ def run_suite(
 
     all_langs = {a.language for a in adapters} | set(poly_detected)
     print("  languages: " + (", ".join(sorted(all_langs)) or "none detected"))
+
+    # Start suite in background immediately so it overlaps with everything.
+    suite_bg = None
+    python_detected = any(a.language == "python" for a in adapters)
+    if python_detected and (modules is None or "suite" in modules):
+        if mode != "min" and not fast and not fix:
+            suite_bg = ThreadPoolExecutor(max_workers=1)
+            suite_bg_future = suite_bg.submit(
+                _run_one_module, target_root, "suite", mode, fix, severity, fast, None
+            )
+            print(
+                "  [suite           ] running test suite in background...", flush=True
+            )
 
     # 0. Universal source-encoding check (language-agnostic; honours the target's
     #    #encoding, default utf-8). Runs on default/full; skipped in `min` and
@@ -239,7 +253,34 @@ def run_suite(
             shared_cov = cov_tmp / ".coverage"
 
         try:
+            # Start subprocess-bound audits in background alongside the
+            # CPU-bound wiring/phd/runtime/quality chain.
+            BG_MODULES = {"lint", "black", "semgrep", "bandit", "deps"}
+            bg_futures = []  # (module_name, future)
+            bg_executor = ThreadPoolExecutor(max_workers=len(BG_MODULES))
+            for mn, desc in audit_modules:
+                if mn in BG_MODULES:
+                    bg_futures.append(
+                        (
+                            mn,
+                            bg_executor.submit(
+                                _run_one_module,
+                                target_root,
+                                mn,
+                                mode,
+                                fix,
+                                severity,
+                                fast,
+                                shared_cov,
+                            ),
+                        )
+                    )
+
             for module_name, description in audit_modules:
+                if module_name == "suite" and suite_bg is not None:
+                    continue  # running in background
+                if module_name in BG_MODULES:
+                    continue  # running in background, collect later
                 _run_step(
                     results,
                     module_name,
@@ -248,6 +289,16 @@ def run_suite(
                         target_root, m, mode, fix, severity, fast, shared_cov
                     ),
                 )
+
+            # Collect background subprocess results
+            for mn, fut in bg_futures:
+                r = fut.result()
+                r.duration_seconds = 0
+                results.append(r)
+                sc = _status_char(r.status)
+                dl = _detail_line(r)
+                print(f"  [{sc}] {mn:16} {dl}")
+            bg_executor.shutdown(wait=False)
         finally:
             if cov_tmp is not None:
                 shutil.rmtree(cov_tmp, ignore_errors=True)
@@ -285,6 +336,13 @@ def run_suite(
             )
 
     total = round(time.monotonic() - start, 1)
+
+    # Collect background suite result
+    if suite_bg is not None:
+        suite_result = suite_bg_future.result()
+        suite_result.duration_seconds = 0
+        results.append(suite_result)
+        suite_bg.shutdown(wait=False)
 
     # Print summary
     print()
