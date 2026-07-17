@@ -21,6 +21,7 @@ SUMMARY_RE = re.compile(r"SUMMARY\s+HIGH:\s*(\d+)\s+MEDIUM:\s*(\d+)\s+INFO:\s*(\
 def run(target_root: Path, strict: bool = True) -> AuditResult:
     """Run the runtime audit against a target project."""
     import audit_code.audit_runtime as audit_runtime
+
     audit_runtime.ROOT = target_root.resolve()
 
     saved_argv = sys.argv[:]

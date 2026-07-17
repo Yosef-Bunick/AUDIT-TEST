@@ -1,10 +1,10 @@
 """deps.py — dependency scanner. Now calls audit_deps.main() directly."""
 
 import io
-import subprocess  # kept for test monkeypatch compat
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
+
 from audit_code.models import (
     AuditResult,
     AuditStatus,
@@ -14,6 +14,7 @@ from audit_code.models import (
 def run(target_root: Path, print_only: bool = False) -> AuditResult:
     """Scan dependencies and update .requirements."""
     import audit_code.audit_deps as audit_deps
+
     audit_deps.ROOT = target_root.resolve()
 
     saved_argv = sys.argv[:]
