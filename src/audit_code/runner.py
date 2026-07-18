@@ -289,23 +289,8 @@ def run_suite(
                     continue  # running in background
                 if module_name in BG_MODULES:
                     continue  # running in background, collect later
-                if module_name == "quality" and shared_cov is not None:
-                    # Q5 needs the background suite's coverage run. Block for
-                    # it here — the background run is already most of the way
-                    # done by now, so waiting is strictly cheaper than paying
-                    # for a second full coverage run inside quality itself.
-                    print(
-                        "  [quality         ] waiting on background suite run "
-                        "for coverage data...",
-                        flush=True,
-                    )
-                    suite_result = suite_bg_future.result()
-                    suite_result.duration_seconds = 0
-                    results.append(suite_result)
-                    sc = _status_char(suite_result.status)
-                    print(f"  [{sc}] {'suite':16} {_detail_line(suite_result)}")
-                    suite_bg.shutdown(wait=False)
-                    suite_bg = None  # collected — skip the later pickup below
+                if module_name == "quality":
+                    continue  # run last — see below, needs suite's coverage data
                 _run_step(
                     results,
                     module_name,
@@ -324,6 +309,37 @@ def run_suite(
                 dl = _detail_line(r)
                 print(f"  [{sc}] {mn:16} {dl}")
             bg_executor.shutdown(wait=False)
+
+            # `quality` runs last: Q5 needs the background suite's coverage
+            # run, which by now has had the whole rest of the audit to
+            # finish in, so there's nothing to gain by running quality any
+            # earlier — block for suite here instead of paying for a second
+            # full coverage run inside quality itself.
+            quality_entry = next(
+                (item for item in audit_modules if item[0] == "quality"), None
+            )
+            if quality_entry is not None:
+                if shared_cov is not None and suite_bg is not None:
+                    print(
+                        "  [quality         ] waiting on background suite run "
+                        "for coverage data...",
+                        flush=True,
+                    )
+                    suite_result = suite_bg_future.result()
+                    suite_result.duration_seconds = 0
+                    results.append(suite_result)
+                    sc = _status_char(suite_result.status)
+                    print(f"  [{sc}] {'suite':16} {_detail_line(suite_result)}")
+                    suite_bg.shutdown(wait=False)
+                    suite_bg = None  # collected — skip the later pickup below
+                _run_step(
+                    results,
+                    "quality",
+                    quality_entry[1],
+                    lambda: _run_one_module(
+                        target_root, "quality", mode, fix, severity, fast, shared_cov
+                    ),
+                )
         finally:
             if cov_tmp is not None:
                 shutil.rmtree(cov_tmp, ignore_errors=True)
