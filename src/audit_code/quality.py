@@ -13,6 +13,7 @@ Q8 [INFO] mutation testing (opt-in)
 import argparse as _argparse
 import ast
 import hashlib
+import importlib.metadata
 import importlib.util
 import json
 import os
@@ -863,13 +864,18 @@ def _q9_scalene(target_root, root, findings, counts, out):
         out.append("")
         return
 
-    rc, ver = _run(tool.split() + ["--version"], root, timeout=10)
-    if rc != 0:
-        out.append(f"  SKIP: scalene failed to launch (exit {rc})")
-        out.append("")
-        return
-
-    ver_line = ver.strip().split("\n")[0] if ver.strip() else "unknown"
+    # Version via package metadata: `scalene --version` imports scalene's
+    # full stack (~10s on Windows) and can outlive a 10s subprocess timeout.
+    try:
+        ver_line = f"Scalene version {importlib.metadata.version('scalene')}"
+    except importlib.metadata.PackageNotFoundError:
+        # External binary (found via PATH, not this interpreter) — launch it.
+        rc, ver = _run(tool.split() + ["--version"], root, timeout=30)
+        if rc != 0:
+            out.append(f"  SKIP: scalene failed to launch (exit {rc})")
+            out.append("")
+            return
+        ver_line = ver.strip().split("\n")[0] if ver.strip() else "unknown"
     out.append(f"  scalene: {ver_line}")
     out.append("  Scalene is available for runtime bottleneck profiling.")
     out.append("  Run:  audit-test bottle app.py     (script hotspots)")
