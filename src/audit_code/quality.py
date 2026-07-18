@@ -738,60 +738,72 @@ def run(
     )
     stdout_lines.append("")
 
-    _q0_syntax(root, prod, test_files, findings, counts, stdout_lines)
+    if fix:
+        # `f` = fix FIRST, verify after. Black runs immediately, then
+        # ruff --fix (that order — format, then lint-fix); ruff's fix
+        # branch re-checks for unfixable leftovers, and Q0 then proves
+        # every file still parses. The analysis gates (Q3-Q9) never run
+        # in fix mode — fixing is not auditing.
+        _q1_black(target_root, root, True, findings, counts, stdout_lines)
+        _q2_ruff(target_root, root, True, findings, counts, stdout_lines)
+        _q0_syntax(root, prod, test_files, findings, counts, stdout_lines)
+    else:
+        _q0_syntax(root, prod, test_files, findings, counts, stdout_lines)
 
-    # Run independent external tools in parallel (black, ruff, mypy, CVE).
-    # Each tool writes to its own isolated buffer to avoid jumbled output.
-    # Merged in deterministic order after all complete.
-    from concurrent.futures import ThreadPoolExecutor
+        # Run independent external tools in parallel (black, ruff, mypy, CVE).
+        # Each tool writes to its own isolated buffer to avoid jumbled output.
+        # Merged in deterministic order after all complete.
+        from concurrent.futures import ThreadPoolExecutor
 
-    def _run_tool(fn, *args):
-        """Run a Q-function with isolated output buffers."""
-        local_findings = []
-        local_counts = {"HIGH": 0, "MEDIUM": 0, "INFO": 0}
-        local_out = []
-        fn(*args, local_findings, local_counts, local_out)
-        return local_findings, local_counts, local_out
+        def _run_tool(fn, *args):
+            """Run a Q-function with isolated output buffers."""
+            local_findings = []
+            local_counts = {"HIGH": 0, "MEDIUM": 0, "INFO": 0}
+            local_out = []
+            fn(*args, local_findings, local_counts, local_out)
+            return local_findings, local_counts, local_out
 
-    tool_jobs = [
-        (_q1_black, target_root, root, fix),
-        (_q2_ruff, target_root, root, fix),
-    ]
-    if not fast:
-        tool_jobs.extend(
-            [
-                (_q3_mypy, target_root, root, strict_mypy),
-                (_q4_cves, target_root, root),
+        tool_jobs = [
+            (_q1_black, target_root, root, fix),
+            (_q2_ruff, target_root, root, fix),
+        ]
+        if not fast:
+            tool_jobs.extend(
+                [
+                    (_q3_mypy, target_root, root, strict_mypy),
+                    (_q4_cves, target_root, root),
+                ]
+            )
+
+        # Submit all, collect results, merge in submission order
+        with ThreadPoolExecutor(max_workers=len(tool_jobs)) as ex:
+            job_futures = [
+                (fn, ex.submit(_run_tool, fn, *args)) for fn, *args in tool_jobs
             ]
-        )
+            for fn, fut in job_futures:
+                loc_find, loc_cnt, loc_out = fut.result()
+                findings.extend(loc_find)
+                for k in counts:
+                    counts[k] += loc_cnt[k]
+                stdout_lines.extend(loc_out)
 
-    # Submit all, collect results, merge in submission order
-    with ThreadPoolExecutor(max_workers=len(tool_jobs)) as ex:
-        job_futures = [(fn, ex.submit(_run_tool, fn, *args)) for fn, *args in tool_jobs]
-        for fn, fut in job_futures:
-            loc_find, loc_cnt, loc_out = fut.result()
-            findings.extend(loc_find)
-            for k in counts:
-                counts[k] += loc_cnt[k]
-            stdout_lines.extend(loc_out)
+        if not fast:
+            _q5_never_executed(
+                root,
+                tests_dir,
+                fast,
+                pytest_extra,
+                shared_cov,
+                findings,
+                counts,
+                stdout_lines,
+            )
+            _q8_mutation(target_root, root, mutation, counts, stdout_lines)
 
-    if not fast:
-        _q5_never_executed(
-            root,
-            tests_dir,
-            fast,
-            pytest_extra,
-            shared_cov,
-            findings,
-            counts,
-            stdout_lines,
-        )
-        _q8_mutation(target_root, root, mutation, counts, stdout_lines)
+        _q6_docstrings(root, prod, findings, counts, stdout_lines)
+        _q7_test_hygiene(root, tests_dir, findings, counts, stdout_lines)
 
-    _q6_docstrings(root, prod, findings, counts, stdout_lines)
-    _q7_test_hygiene(root, tests_dir, findings, counts, stdout_lines)
-
-    _q9_scalene(target_root, root, findings, counts, stdout_lines)
+        _q9_scalene(target_root, root, findings, counts, stdout_lines)
     # Summary
     stdout_lines.append("=" * 74)
     stdout_lines.append(

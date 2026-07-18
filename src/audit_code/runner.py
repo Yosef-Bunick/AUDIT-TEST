@@ -9,6 +9,7 @@ Order:
   5. Optional --profile checks.
 """
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -29,7 +30,7 @@ from audit_code import (
 from audit_code.adapters import discover
 from audit_code.adapters.base import run_tool, which
 from audit_code.audit_shared import force_utf8_streams
-from audit_code.config import FULL_SUITE_TIMEOUT
+from audit_code.config import EXCLUDE_DIRS, FULL_SUITE_TIMEOUT
 from audit_code.models import AuditResult, AuditStatus
 from audit_code.profiles import load as profile_load
 
@@ -259,6 +260,13 @@ def run_suite(
             audit_modules = fast_audits
         else:
             audit_modules = all_audits
+
+        if fix:
+            # Honest banner: in fix mode quality is black+ruff --fix, not audits
+            audit_modules = [
+                (n, "black + ruff --fix, then verify" if n == "quality" else d)
+                for n, d in audit_modules
+            ]
 
         try:
             # Start subprocess-bound audits in background alongside the
@@ -517,7 +525,12 @@ def _run_standalone_tool(target_root: Path, tool: str, fix: bool) -> AuditResult
         )
 
     if tool == "black":
-        cmd = [exe, "."] if fix else [exe, "--check", "."]
+        # Same exclusions as quality's Q1 — otherwise `b` flags vendored
+        # files (node_modules etc.) that `f`/`q` correctly skip.
+        excl = "|".join(re.escape(d) for d in sorted(EXCLUDE_DIRS))
+        cmd = [exe, ".", "--extend-exclude", excl]
+        if not fix:
+            cmd.insert(1, "--check")
     else:  # lint (ruff)
         cmd = [
             exe,
