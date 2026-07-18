@@ -99,13 +99,32 @@ def run_suite(
     print("  languages: " + (", ".join(sorted(all_langs)) or "none detected"))
 
     # Start suite in background immediately so it overlaps with everything.
+    # Dedup: `suite` and `quality` both run the whole test suite (quality's
+    # Q5 under coverage). When quality will also run, instrument this one
+    # background run with coverage so quality can reuse the data instead of
+    # running the suite a second time — quality must then WAIT for this
+    # future before checking shared_cov (see the `quality` branch below);
+    # it completes long after wiring/phd/runtime, so a same-time check
+    # without waiting would always find shared_cov missing.
     suite_bg = None
+    cov_tmp = None
+    shared_cov = None
     python_detected = any(a.language == "python" for a in adapters)
     if python_detected and (modules is None or "suite" in modules):
         if mode != "min" and not fast and not fix:
+            if modules is None or "quality" in modules:
+                cov_tmp = Path(tempfile.mkdtemp(prefix="audit_shared_cov_"))
+                shared_cov = cov_tmp / ".coverage"
             suite_bg = ThreadPoolExecutor(max_workers=1)
             suite_bg_future = suite_bg.submit(
-                _run_one_module, target_root, "suite", mode, fix, severity, fast, None
+                _run_one_module,
+                target_root,
+                "suite",
+                mode,
+                fix,
+                severity,
+                fast,
+                shared_cov,
             )
             print(
                 "  [suite           ] running test suite in background...", flush=True
@@ -241,17 +260,6 @@ def run_suite(
         else:
             audit_modules = all_audits
 
-        # Dedup: `suite` and `quality` both run the whole test suite (quality's
-        # Q5 under coverage). When both are scheduled, run it ONCE — suite runs
-        # it under coverage and quality reuses that data. all_audits lists suite
-        # before quality, so the data file exists by the time quality reads it.
-        names = {n for n, _ in audit_modules}
-        cov_tmp = None
-        shared_cov = None
-        if {"suite", "quality"} <= names and not fast and not fix and mode != "min":
-            cov_tmp = Path(tempfile.mkdtemp(prefix="audit_shared_cov_"))
-            shared_cov = cov_tmp / ".coverage"
-
         try:
             # Start subprocess-bound audits in background alongside the
             # CPU-bound wiring/phd/runtime/quality chain.
@@ -281,6 +289,23 @@ def run_suite(
                     continue  # running in background
                 if module_name in BG_MODULES:
                     continue  # running in background, collect later
+                if module_name == "quality" and shared_cov is not None:
+                    # Q5 needs the background suite's coverage run. Block for
+                    # it here — the background run is already most of the way
+                    # done by now, so waiting is strictly cheaper than paying
+                    # for a second full coverage run inside quality itself.
+                    print(
+                        "  [quality         ] waiting on background suite run "
+                        "for coverage data...",
+                        flush=True,
+                    )
+                    suite_result = suite_bg_future.result()
+                    suite_result.duration_seconds = 0
+                    results.append(suite_result)
+                    sc = _status_char(suite_result.status)
+                    print(f"  [{sc}] {'suite':16} {_detail_line(suite_result)}")
+                    suite_bg.shutdown(wait=False)
+                    suite_bg = None  # collected — skip the later pickup below
                 _run_step(
                     results,
                     module_name,

@@ -1223,6 +1223,61 @@ def _bottleneck_hotspots(prof: dict) -> dict:
     }
 
 
+_QUALITY_GATE_FUNCS = (
+    "_q0_syntax",
+    "_q1_black",
+    "_q2_ruff",
+    "_q3_mypy",
+    "_q4_cves",
+    "_q5_never_executed",
+    "_q6_docstrings",
+    "_q7_test_hygiene",
+    "_q8_mutation",
+    "_q9_scalene",
+)
+
+
+def _bottleneck_quality_timing(target: Path) -> dict:
+    """Run the quality audit in-process, timing each Q-gate.
+
+    `quality.run()` looks up `_q1_black` etc. by name in its own module
+    globals at call time, so patching those names on the module (then
+    restoring them) is enough to time each gate without touching run()."""
+    import time
+
+    from audit_code import quality
+
+    elapsed: dict[str, float] = {}
+    originals = {name: getattr(quality, name) for name in _QUALITY_GATE_FUNCS}
+
+    def _make_timed(name, fn):
+        def _timed(*args, **kwargs):
+            t0 = time.perf_counter()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                elapsed[name] = elapsed.get(name, 0.0) + (time.perf_counter() - t0)
+
+        return _timed
+
+    for name, fn in originals.items():
+        setattr(quality, name, _make_timed(name, fn))
+
+    t0 = time.perf_counter()
+    try:
+        quality.run(target)
+    finally:
+        for name, fn in originals.items():
+            setattr(quality, name, fn)
+    total = time.perf_counter() - t0
+
+    gates = [
+        {"name": name, "sec": round(secs, 2)}
+        for name, secs in sorted(elapsed.items(), key=lambda kv: -kv[1])
+    ]
+    return {"total_sec": round(total, 2), "gates": gates}
+
+
 def _bottleneck_profile(target: Path, spec: str) -> tuple[dict | None, str]:
     """Run scalene against *spec* ('tests' or a script). Returns (data, note)."""
     import tempfile
@@ -1267,9 +1322,11 @@ def _handle_bottleneck() -> None:  # audit: ok (CLI entry point)
             "  bottleneck | B         same command, other spellings\n"
             "  bottle tests           + scalene runtime profile of the pytest suite\n"
             "  bottle app.py          + scalene runtime profile of a script\n"
+            "  bottle quality         + per-gate timing of `audit-test --quality`\n"
             "  bottle --path <dir>    audit another project\n"
             "  bottle --json <file>   write findings as JSON\n\n"
-            "Runtime profiling needs scalene (pip install scalene).\n"
+            "Scalene profiling needs scalene (pip install scalene); `bottle quality`\n"
+            "needs nothing extra — it times each Q-gate in-process.\n"
             "Exit 1 when BOTTLE2 (HIGH) findings exist, else 0."
         )
         sys.exit(0)
@@ -1282,7 +1339,10 @@ def _handle_bottleneck() -> None:  # audit: ok (CLI entry point)
 
     profile: dict | None = None
     prof_note = ""
-    if leftover:
+    gate_timing: dict | None = None
+    if leftover and leftover[0] == "quality":
+        gate_timing = _bottleneck_quality_timing(target)
+    elif leftover:
         profile, prof_note = _bottleneck_profile(target, leftover[0])
 
     out: list[str] = []
@@ -1300,23 +1360,37 @@ def _handle_bottleneck() -> None:  # audit: ok (CLI entry point)
             out.append(f"  ... +{len(items) - 25} more")
         out.append("")
 
-    out.append("=" * 74)
-    out.append("RUNTIME [PROFILE] scalene hotspots")
-    out.append("=" * 74)
-    if prof_note:
-        out.append(f"  {prof_note}")
-    elif profile is not None:
-        out.append(f"  elapsed: {profile['elapsed_sec']}s — top lines by CPU/memory:")
-        for s in profile["hotspots"]:
-            loc = f"{s['file']}:{s['line']}"
-            out.append(
-                f"  {loc:44} cpu {s['cpu_percent']:5.1f}%  "
-                f"peak {s['peak_mb']:7.1f}MB  {s['source']}"
-            )
-        if not profile["hotspots"]:
-            out.append("  no line above 1% CPU / 10MB peak")
+    if gate_timing is not None:
+        out.append("=" * 74)
+        out.append("RUNTIME [PROFILE] quality gate timing")
+        out.append("=" * 74)
+        out.append(f"  total: {gate_timing['total_sec']}s")
+        for g in gate_timing["gates"]:
+            out.append(f"  {g['name']:<24} {g['sec']:>8.2f}s")
+        if not gate_timing["gates"]:
+            out.append("  no gates ran (nothing to time)")
     else:
-        out.append("  static scan only — profile with: bottle tests | bottle app.py")
+        out.append("=" * 74)
+        out.append("RUNTIME [PROFILE] scalene hotspots")
+        out.append("=" * 74)
+        if prof_note:
+            out.append(f"  {prof_note}")
+        elif profile is not None:
+            out.append(
+                f"  elapsed: {profile['elapsed_sec']}s — top lines by CPU/memory:"
+            )
+            for s in profile["hotspots"]:
+                loc = f"{s['file']}:{s['line']}"
+                out.append(
+                    f"  {loc:44} cpu {s['cpu_percent']:5.1f}%  "
+                    f"peak {s['peak_mb']:7.1f}MB  {s['source']}"
+                )
+            if not profile["hotspots"]:
+                out.append("  no line above 1% CPU / 10MB peak")
+        else:
+            out.append(
+                "  static scan only — profile with: bottle tests | bottle app.py | bottle quality"
+            )
     out.append("")
     out.append(f"SUMMARY  HIGH: {len(b2)}   MEDIUM: {len(b1)}")
 
@@ -1324,6 +1398,7 @@ def _handle_bottleneck() -> None:  # audit: ok (CLI entry point)
         "static": {"BOTTLE1": b1, "BOTTLE2": b2},
         "profile": profile,
         "profile_note": prof_note,
+        "quality_gate_timing": gate_timing,
         "summary": {"high": len(b2), "medium": len(b1)},
     }
     _emit(data, json_file, "\n".join(out))
