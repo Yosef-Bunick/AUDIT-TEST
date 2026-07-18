@@ -780,6 +780,13 @@ def _is_deadcode_mode() -> bool:
     return False
 
 
+def _is_bottleneck_mode() -> bool:
+    for a in sys.argv[1:]:
+        if not a.startswith("-"):
+            return a in ("bottle", "bottleneck", "B")
+    return False
+
+
 def _handle_fix() -> None:  # audit: ok (CLI entry point)
     """Delegate to surgeon — surgical line-based file edits."""
     idx = sys.argv.index("surgeon")
@@ -1155,6 +1162,174 @@ def _handle_graph() -> None:  # audit: ok (CLI entry point)
     sys.exit(EXIT_PASS if result.status == AuditStatus.PASS else 2)
 
 
+# ── bottleneck command ───────────────────────────────────────────────────────
+
+
+def _bottleneck_static(target: Path) -> dict:
+    """Run the phd audit in-process, keep only BOTTLE1/BOTTLE2 findings."""
+    import io
+    from contextlib import redirect_stdout
+
+    from audit_code import audit_phd
+
+    audit_phd.ROOT = target.resolve()
+    saved_argv = sys.argv[:]
+    buf = io.StringIO()
+    try:
+        sys.argv = ["audit_phd", "--path", str(target), "--json"]
+        with redirect_stdout(buf):
+            try:
+                audit_phd.main()
+            except SystemExit:
+                pass  # audit: ok (json mode always exits — output is captured)
+    finally:
+        sys.argv = saved_argv
+
+    lines = buf.getvalue().splitlines()
+    try:
+        start = next(i for i, ln in enumerate(lines) if ln.strip() in ("{", "{}"))
+        data = json.loads("\n".join(lines[start:]))
+    except (StopIteration, json.JSONDecodeError):
+        return {"BOTTLE1": [], "BOTTLE2": []}
+    return {cid: data.get(cid, []) for cid in ("BOTTLE1", "BOTTLE2")}
+
+
+def _bottleneck_hotspots(prof: dict) -> dict:
+    """Reduce scalene profile JSON to the top CPU/memory lines."""
+    spots = []
+    for fname, fdata in (prof.get("files") or {}).items():
+        for ln in fdata.get("lines", []):
+            cpu = (
+                float(ln.get("n_cpu_percent_python") or 0)
+                + float(ln.get("n_cpu_percent_c") or 0)
+                + float(ln.get("n_sys_percent") or 0)
+            )
+            mem = float(ln.get("n_peak_mb") or 0)
+            if cpu < 1.0 and mem < 10.0:
+                continue
+            spots.append(
+                {
+                    "file": fname,
+                    "line": int(ln.get("lineno") or 0),
+                    "cpu_percent": round(cpu, 1),
+                    "peak_mb": round(mem, 1),
+                    "source": (ln.get("line") or "").rstrip()[:80],
+                }
+            )
+    spots.sort(key=lambda s: (-s["cpu_percent"], -s["peak_mb"]))
+    return {
+        "elapsed_sec": round(float(prof.get("elapsed_time_sec") or 0), 2),
+        "hotspots": spots[:15],
+    }
+
+
+def _bottleneck_profile(target: Path, spec: str) -> tuple[dict | None, str]:
+    """Run scalene against *spec* ('tests' or a script). Returns (data, note)."""
+    import tempfile
+
+    from audit_code.quality import _run, _tool
+
+    tool = _tool("scalene", target)
+    if not tool:
+        return None, "SKIP: scalene not installed (pip install scalene)"
+
+    if spec == "tests":
+        prog = ["-m", "pytest", "tests/", "-x", "-q"]
+    else:
+        script = Path(spec) if Path(spec).is_absolute() else target / spec
+        if not script.exists():
+            return None, f"SKIP: profile target not found: {spec}"
+        prog = [str(script)]
+
+    with tempfile.TemporaryDirectory() as td:
+        out_json = Path(td) / "scalene.json"
+        cmd = tool.split() + ["--cli", "--json", "--outfile", str(out_json)] + prog
+        rc, out = _run(cmd, target, timeout=600)
+        if not out_json.exists() or not out_json.stat().st_size:
+            tail = "\n    ".join(out.strip().splitlines()[-3:])
+            return None, f"SKIP: scalene produced no output (exit {rc})\n    {tail}"
+        try:
+            prof = json.loads(out_json.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            return None, f"SKIP: cannot parse scalene output ({e})"
+    return _bottleneck_hotspots(prof), ""
+
+
+def _handle_bottleneck() -> None:  # audit: ok (CLI entry point)
+    """`bottle [tests|script.py] [--path DIR] [--json FILE]` — find bottlenecks."""
+    idx = next(i for i, a in enumerate(sys.argv) if a in ("bottle", "bottleneck", "B"))
+    args = sys.argv[idx + 1 :]
+    if args and args[0] in ("help", "-H", "--help"):
+        print(
+            "bottle — find performance bottlenecks (static + runtime)\n\n"
+            "  bottle                 static scan: BOTTLE1 await-in-loop (MEDIUM),\n"
+            "                         BOTTLE2 sync blocking I/O in async def (HIGH)\n"
+            "  bottleneck | B         same command, other spellings\n"
+            "  bottle tests           + scalene runtime profile of the pytest suite\n"
+            "  bottle app.py          + scalene runtime profile of a script\n"
+            "  bottle --path <dir>    audit another project\n"
+            "  bottle --json <file>   write findings as JSON\n\n"
+            "Runtime profiling needs scalene (pip install scalene).\n"
+            "Exit 1 when BOTTLE2 (HIGH) findings exist, else 0."
+        )
+        sys.exit(0)
+
+    root, json_file, leftover = _split_path_json(args)
+    target = find_target_root(root)
+    static = _bottleneck_static(target)
+    b1 = static.get("BOTTLE1", [])
+    b2 = static.get("BOTTLE2", [])
+
+    profile: dict | None = None
+    prof_note = ""
+    if leftover:
+        profile, prof_note = _bottleneck_profile(target, leftover[0])
+
+    out: list[str] = []
+    for cid, sev, title, items in (
+        ("BOTTLE2", "HIGH", "sync blocking I/O inside async def", b2),
+        ("BOTTLE1", "MEDIUM", "await inside a loop (sequential async)", b1),
+    ):
+        out.append("=" * 74)
+        out.append(f"{cid} [{sev}] {title} - {len(items)} finding(s)")
+        out.append("=" * 74)
+        for it in items[:25]:
+            loc = f"{it['file']}:{it['line']}"
+            out.append(f"  {loc:52} {it['msg']}")
+        if len(items) > 25:
+            out.append(f"  ... +{len(items) - 25} more")
+        out.append("")
+
+    out.append("=" * 74)
+    out.append("RUNTIME [PROFILE] scalene hotspots")
+    out.append("=" * 74)
+    if prof_note:
+        out.append(f"  {prof_note}")
+    elif profile is not None:
+        out.append(f"  elapsed: {profile['elapsed_sec']}s — top lines by CPU/memory:")
+        for s in profile["hotspots"]:
+            loc = f"{s['file']}:{s['line']}"
+            out.append(
+                f"  {loc:44} cpu {s['cpu_percent']:5.1f}%  "
+                f"peak {s['peak_mb']:7.1f}MB  {s['source']}"
+            )
+        if not profile["hotspots"]:
+            out.append("  no line above 1% CPU / 10MB peak")
+    else:
+        out.append("  static scan only — profile with: bottle tests | bottle app.py")
+    out.append("")
+    out.append(f"SUMMARY  HIGH: {len(b2)}   MEDIUM: {len(b1)}")
+
+    data = {
+        "static": {"BOTTLE1": b1, "BOTTLE2": b2},
+        "profile": profile,
+        "profile_note": prof_note,
+        "summary": {"high": len(b2), "medium": len(b1)},
+    }
+    _emit(data, json_file, "\n".join(out))
+    sys.exit(EXIT_FAIL if b2 else EXIT_PASS)
+
+
 def main():
     _force_utf8_output()
     if _is_gate_mode():
@@ -1175,6 +1350,8 @@ def main():
         _handle_scan()
     elif _is_graph_mode():
         _handle_graph()
+    elif _is_bottleneck_mode():
+        _handle_bottleneck()
     elif _is_fix_mode():
         _handle_fix()
     elif _is_focus_mode():
