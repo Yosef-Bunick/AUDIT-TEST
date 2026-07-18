@@ -184,7 +184,8 @@ Discovered 2026-07-07 when trying to add React hook rules — 3 corruption-recov
 | 43 | **K8s: `:latest` image tag** | ✅ done | `poly-k8s-latest-tag` regex in polyglot.py YAML spec. Flags `:latest` or missing tag. MEDIUM. Also: `poly-k8s-privileged` (HIGH). 5 polyglot tests |
 | 44 | **YAML language spec** | ✅ done | `_YAML` LangSpec added to polyglot.py (`.yaml`, `.yml`, `supports_wiring=False`). Included in `_ALL_SPECS`. Prerequisite for K8s rules |
 | 45 | **BOTTLE1/BOTTLE2 — async bottleneck detection** | ✅ done | BOTTLE1: `await` in loop without `asyncio.gather()` (MEDIUM). BOTTLE2: sync blocking I/O (`requests.get`, `time.sleep`) inside `async def` (HIGH). 8 tests |
-| 46 | **Q9 Scalene profiler integration** | ✅ done | `_q9_scalene` in quality.py. Checks `scalene --version`, reports availability. SKIP if not installed. Full profiling run (scalene against project) deferred to `--bottleneck` CLI flag |
+| 46 | **Q9 Scalene profiler integration** | ✅ done | `_q9_scalene` in quality.py. Checks `scalene --version`, reports availability. SKIP if not installed. Full profiling run shipped via item 47 |
+| 47 | **`bottle` command — bottleneck finder CLI** | ✅ done | Bare words `bottle` / `bottleneck` / `B` → `_handle_bottleneck()` in cli.py. Combines static BOTTLE1/BOTTLE2 scan (in-process audit_phd `--json`) + optional scalene runtime profile (`bottle tests` or `bottle app.py`, top-15 CPU/mem hotspot lines). `--path`, `--json` supported. Exit 1 on BOTTLE2 HIGH. Tests in test_bottleneck_cmd.py |
 
 ## Agent mining — Hermes session analysis (2026-07-16)
 

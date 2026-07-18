@@ -850,10 +850,9 @@ def _q9_scalene(target_root, root, findings, counts, out):
     """Q9: Scalene CPU/memory profiler — bottleneck detection at runtime.
 
     Checks whether scalene is installed and available. When present,
-    reports version and usage instructions. Full profiling integration
-    (running scalene against the project) requires --bottleneck flag
-    which is not yet wired to CLI — currently this is an availability
-    check only.
+    reports version and usage instructions. The full profiling run is
+    wired to the `audit-test bottle` command (also `bottleneck` / `B`),
+    which combines the static BOTTLE1/BOTTLE2 scan with scalene hotspots.
     """
     tool = _tool("scalene", target_root)
     out.append("=" * 74)
@@ -873,6 +872,6 @@ def _q9_scalene(target_root, root, findings, counts, out):
     ver_line = ver.strip().split("\n")[0] if ver.strip() else "unknown"
     out.append(f"  scalene: {ver_line}")
     out.append("  Scalene is available for runtime bottleneck profiling.")
-    out.append("  Run manually:  scalene your_app.py")
-    out.append("                scalene -m pytest tests/")
+    out.append("  Run:  audit-test bottle app.py     (script hotspots)")
+    out.append("        audit-test bottle tests      (pytest suite hotspots)")
     out.append("")

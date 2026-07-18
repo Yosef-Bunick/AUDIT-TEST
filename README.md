@@ -318,6 +318,25 @@ The graph walks **10 languages** — Python, JS/TS, Rust, Go, Java, Kotlin,
 Swift, PHP, C#, and C/C++ — and also reports **cross-language edges**:
 subprocess calls and FFI bindings that jump from one language into another.
 
+### Bottleneck finder
+
+Find performance bottlenecks two ways — a static async scan plus an optional
+scalene runtime profile:
+
+```powershell
+audit-test bottle                     # static: BOTTLE1 await-in-loop (MEDIUM),
+                                      #         BOTTLE2 sync I/O in async def (HIGH)
+audit-test bottleneck                 # same command
+audit-test B                          # same command
+audit-test bottle tests               # + scalene profile of the pytest suite
+audit-test bottle app.py              # + scalene profile of a script
+audit-test bottle -p <dir>            # another project
+audit-test bottle --json out.json     # machine-readable findings
+```
+
+The runtime profile needs `pip install scalene` and reports the top-15 lines
+by CPU % / peak memory. Exit code is 1 when any BOTTLE2 (HIGH) finding exists.
+
 ### Speed
 
 A full `audit-test` runs the test suite under coverage **once**: the `suite`
