@@ -322,22 +322,17 @@ def _q2_ruff(target_root, root, fix, findings, counts, out):
         out.append("")
         return
     if fix:
-        rc, res = _run(tool.split() + _RUFF_CHECK_ARGS + ["--fix", "--exit-zero"], root)
-        fixed_count = len(re.findall(r"^Fixed \d", res, re.MULTILINE)) or (
-            1 if "fixed" in res.lower() else 0
-        )
-        msg = f"\n  ruff: {fixed_count} issue(s) auto-fixed"
-        out.append(msg)
-        print(msg)
-        # Still report remaining unfixable issues
-        out.append("  re-running check for remaining issues...")
-        rc2, res2 = _run(
+        # Single pass: --fix applies auto-fixes AND --output-format json
+        # reports EVERY remaining issue (including unfixable syntax errors).
+        # Fixable issues are auto-resolved — the "remaining" count IS the
+        # actionable verdict.
+        rc, res = _run(
             tool.split()
             + _RUFF_CHECK_ARGS
-            + ["--output-format", "json", "--exit-zero"],
+            + ["--fix", "--output-format", "json", "--exit-zero"],
             root,
         )
-        sec, lint = _q2_record(res2, findings, counts, out, verbose_parse_fail=False)
+        sec, lint = _q2_record(res, findings, counts, out, verbose_parse_fail=False)
         out.append(f"  remaining — security (S*): {len(sec)}   lint/style: {len(lint)}")
         out.append("")
         return
@@ -739,14 +734,12 @@ def run(
     stdout_lines.append("")
 
     if fix:
-        # `f` = fix FIRST, verify after. Black runs immediately, then
-        # ruff --fix (that order — format, then lint-fix); ruff's fix
-        # branch re-checks for unfixable leftovers, and Q0 then proves
-        # every file still parses. The analysis gates (Q3-Q9) never run
-        # in fix mode — fixing is not auditing.
+        # `f` = black format -> ruff lint-fix + report (single combined
+        # pass with --output-format json). No separate file walk, no AST
+        # re-parse — ruff's JSON catches invalid-syntax. The analysis
+        # gates (Q0-Q9 except Q1/Q2's fix branches) never run here.
         _q1_black(target_root, root, True, findings, counts, stdout_lines)
         _q2_ruff(target_root, root, True, findings, counts, stdout_lines)
-        _q0_syntax(root, prod, test_files, findings, counts, stdout_lines)
     else:
         _q0_syntax(root, prod, test_files, findings, counts, stdout_lines)
 
