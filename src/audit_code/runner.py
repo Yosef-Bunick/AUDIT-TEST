@@ -292,13 +292,34 @@ def run_suite(
                         )
                     )
 
+            # CPU-bound Python audits: wiring, phd, and runtime each do
+            # their own AST parse of the same files but look for
+            # different patterns — no shared state, no ordering
+            # dependency. Run them concurrently to cut wall-clock
+            # from sum(w,p,r) ≈ 26s to max(w,p,r) ≈ 11s.
+            CPUBOUND_MODULES = {"wiring", "phd", "runtime"}
+            cpu_futures: dict = {}
+            cpu_executor = ThreadPoolExecutor(max_workers=3)
+
             for module_name, description in audit_modules:
                 if module_name == "suite" and suite_bg is not None:
                     continue  # running in background
                 if module_name in BG_MODULES:
                     continue  # running in background, collect later
                 if module_name == "quality":
-                    continue  # run last — see below, needs suite's coverage data
+                    continue  # run last — needs suite's coverage data (see below)
+                if module_name in CPUBOUND_MODULES:
+                    cpu_futures[module_name] = cpu_executor.submit(
+                        _run_one_module,
+                        target_root,
+                        module_name,
+                        mode,
+                        fix,
+                        severity,
+                        fast,
+                        shared_cov,
+                    )
+                    continue
                 _run_step(
                     results,
                     module_name,
@@ -307,6 +328,16 @@ def run_suite(
                         target_root, m, mode, fix, severity, fast, shared_cov
                     ),
                 )
+
+            # Collect parallel CPU-bound results (wiring/phd/runtime)
+            for module_name, fut in cpu_futures.items():
+                r = fut.result()
+                r.duration_seconds = 0.0
+                results.append(r)
+                sc = _status_char(r.status)
+                dl = _detail_line(r)
+                print(f"  [{sc}] {module_name:16} {dl}")
+            cpu_executor.shutdown(wait=False)
 
             # Collect background subprocess results
             for mn, fut in bg_futures:
