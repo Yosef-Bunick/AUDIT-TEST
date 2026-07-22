@@ -68,6 +68,7 @@ def run_suite(
     verbose: bool = False,
     modules: set[str] | None = None,
     fast: bool = False,
+    req: bool = False,
 ) -> list[AuditResult]:
     """Run the full audit suite against a target project.
 
@@ -126,6 +127,7 @@ def run_suite(
                 severity,
                 fast,
                 shared_cov,
+                req=req,
             )
             print(
                 "  [suite           ] running test suite in background...", flush=True
@@ -288,6 +290,7 @@ def run_suite(
                                 severity,
                                 fast,
                                 shared_cov,
+                                req=req,
                             ),
                         )
                     )
@@ -304,7 +307,7 @@ def run_suite(
                     module_name,
                     description,
                     lambda m=module_name: _run_one_module(
-                        target_root, m, mode, fix, severity, fast, shared_cov
+                        target_root, m, mode, fix, severity, fast, shared_cov, req=req
                     ),
                 )
 
@@ -345,7 +348,7 @@ def run_suite(
                     "quality",
                     quality_entry[1],
                     lambda: _run_one_module(
-                        target_root, "quality", mode, fix, severity, fast, shared_cov
+                        target_root, "quality", mode, fix, severity, fast, shared_cov, req=req
                     ),
                 )
         finally:
@@ -466,6 +469,7 @@ def _run_one_module(
     severity: str | None = "HIGH",
     fast: bool = False,
     shared_cov: Path | None = None,
+    req: bool = False,
 ) -> AuditResult:
     """Run one Python audit module via direct import."""
 
@@ -508,6 +512,8 @@ def _run_one_module(
         kwargs["cov_file"] = shared_cov  # instrument the one shared run
     if module_name == "phd":
         kwargs["severity"] = severity
+    if module_name == "deps":
+        kwargs["req"] = req
 
     return run_fn(target_root, **kwargs)
 

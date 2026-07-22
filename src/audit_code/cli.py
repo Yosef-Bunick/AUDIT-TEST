@@ -227,6 +227,11 @@ def build_audit_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--deps", action="store_true", help="Run dependency scanner")
     parser.add_argument(
+        "--req",
+        action="store_true",
+        help="Write .requirements file (deps module prints-only by default)",
+    )
+    parser.add_argument(
         "-s",
         "--skip",
         default="",
@@ -337,7 +342,8 @@ def run_audit(args: argparse.Namespace) -> int:
         severity=severity,
         verbose=args.verbose,
         modules=modules,
-        fast=args.fast if hasattr(args, "fast") else False,
+        fast=args.fast,
+        req=args.req,
     )
 
     reporting_cfg = cfg.get("reporting", {})
@@ -1470,6 +1476,7 @@ def _expand_bare_words() -> None:
         "cppcheck": "--cppcheck",
         "htmlhint": "--htmlhint",
         "deps": "--deps",
+        "req": "--req",
         "stylelint": "--stylelint",
         "megalinter": "--megalinter",
         # module shortcuts

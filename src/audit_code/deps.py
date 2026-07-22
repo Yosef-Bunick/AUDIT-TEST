@@ -11,8 +11,8 @@ from audit_code.models import (
 )
 
 
-def run(target_root: Path, print_only: bool = False) -> AuditResult:
-    """Scan dependencies and update .requirements."""
+def run(target_root: Path, req: bool = False) -> AuditResult:
+    """Scan dependencies. Prints report always; writes .requirements only with req=True."""
     import audit_code.audit_deps as audit_deps
 
     audit_deps.ROOT = target_root.resolve()
@@ -25,7 +25,7 @@ def run(target_root: Path, print_only: bool = False) -> AuditResult:
             "--path",
             str(target_root),
         ]
-        if print_only:
+        if not req:
             sys.argv.append("--print")
 
         with redirect_stdout(buf):
