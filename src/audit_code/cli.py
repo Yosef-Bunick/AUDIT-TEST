@@ -1137,6 +1137,8 @@ def _handle_graph() -> None:  # audit: ok (CLI entry point)
             "  graph cli.py -3                3 upstream (what imports it)\n"
             "  graph cli.py +5 -3             5 forward, 3 back\n"
             "  graph cli.py +5 -3 --json      machine-readable for agents\n"
+            "  graph cli.py --def main        intra-file call graph around main()\n"
+            "  graph cli.py --def main +3 -2  callees/callers of main(), 3 fwd 2 back\n"
         )
         sys.exit(0)
 
@@ -1147,20 +1149,38 @@ def _handle_graph() -> None:  # audit: ok (CLI entry point)
     module = args[0]
     forward = back = 2
     json_out = False
+    def_name = ""
 
-    for a in args[1:]:
+    rest = args[1:]
+    i = 0
+    while i < len(rest):
+        a = rest[i]
         if a == "--json":
             json_out = True
+        elif a == "--def" and i + 1 < len(rest):
+            def_name = rest[i + 1]
+            i += 1
         elif a.startswith("+") and len(a) > 1 and a[1:].isdigit():
             forward = int(a[1:])
         elif a.startswith("-") and len(a) > 1 and a[1:].isdigit():
             back = int(a[1:])
+        i += 1
 
     target = find_target_root(None)
-    from audit_code.graph import run as graph_run
     from audit_code.models import AuditStatus
 
-    result = graph_run(target, module, forward=forward, back=back, json_out=json_out)
+    if def_name:
+        from audit_code.defgraph import run as defgraph_run
+
+        result = defgraph_run(
+            target, module, def_name, forward=forward, back=back, json_out=json_out
+        )
+    else:
+        from audit_code.graph import run as graph_run
+
+        result = graph_run(
+            target, module, forward=forward, back=back, json_out=json_out
+        )
     if result.stdout:
         print(result.stdout)
     if result.stderr:

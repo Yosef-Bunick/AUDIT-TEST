@@ -318,6 +318,19 @@ The graph walks **10 languages** — Python, JS/TS, Rust, Go, Java, Kotlin,
 Swift, PHP, C#, and C/C++ — and also reports **cross-language edges**:
 subprocess calls and FFI bindings that jump from one language into another.
 
+Add `--def <name>` to drop from file level to function level — an intra-file
+call graph showing what a def calls and which defs call it:
+
+```powershell
+audit-test graph cli.py --def main            # callers/callees of main(), ±2
+audit-test graph cli.py --def main +3 -2      # 3 levels of callees, 2 of callers
+audit-test graph cli.py --def main --json     # machine-readable for agents
+```
+
+Same 10 languages (Python via `ast`, the rest via the installed tree-sitter
+grammars). Edges are name-based within one file: `obj.method()` reduces to
+`method`, so cross-file calls and dynamic dispatch aren't resolved.
+
 ### Bottleneck finder
 
 Find performance bottlenecks two ways — a static async scan plus an optional
