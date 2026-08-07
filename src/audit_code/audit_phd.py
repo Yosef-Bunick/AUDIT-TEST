@@ -130,6 +130,7 @@ import collections
 import json
 import re
 import sys
+import warnings
 from pathlib import Path
 
 from audit_code.audit_shared import should_audit
@@ -510,7 +511,9 @@ def main():
     for p, txt in prod.items():
         sink.register(rel(p), txt)
         try:
-            t = ast.parse(txt)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                t = ast.parse(txt, filename=str(p))
             annotate(t)
             trees[p] = t
         except SyntaxError as e:
@@ -1762,7 +1765,9 @@ def main():
     for tp, ttxt in tests.items():
         sink.register(rel(tp), ttxt)  # enables `# audit: ok` in tests too
         try:
-            test_trees[tp] = ast.parse(ttxt)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                test_trees[tp] = ast.parse(ttxt, filename=str(tp))
         except SyntaxError:
             pass
     tested_any, tested_edge = set(), set()

@@ -57,6 +57,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import warnings
 from pathlib import Path
 
 from audit_code.audit_config import DOC_THRESHOLD_PCT, MIN_FLAG_BODY_LINES, TOOL_TIMEOUT
@@ -132,7 +133,11 @@ def q_syntax(root: Path, tests_dir: Path, counts: dict):
     bad = []
     for p in prod + tests:
         try:
-            ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                ast.parse(
+                    p.read_text(encoding="utf-8", errors="replace"), filename=str(p)
+                )
         except SyntaxError as e:
             bad.append(f"{p.relative_to(root)}:{e.lineno}  {e.msg}")
     _section(
@@ -298,7 +303,11 @@ def q_cves(root: Path, counts: dict):
 def _def_spans(path: Path) -> list[tuple[str, int, int, int]]:
     """(qualname, def_line, body_start, body_end) for every function."""
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(
+                path.read_text(encoding="utf-8", errors="replace"), filename=str(path)
+            )
     except SyntaxError:
         return []
     out = []
@@ -418,7 +427,11 @@ def q_docstrings(root: Path, tests_dir: Path, counts: dict):
     worst: dict = {}
     for p in prod:
         try:
-            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree = ast.parse(
+                    p.read_text(encoding="utf-8", errors="replace"), filename=str(p)
+                )
         except SyntaxError:
             continue
         for node in ast.walk(tree):
@@ -455,7 +468,11 @@ def q_test_hygiene(root: Path, tests_dir: Path, counts: dict):
         if any(part in EXCLUDE_DIRS for part in p.parts):
             continue
         try:
-            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree = ast.parse(
+                    p.read_text(encoding="utf-8", errors="replace"), filename=str(p)
+                )
         except SyntaxError:
             continue
         for node in ast.walk(tree):

@@ -127,6 +127,7 @@ import collections
 import json
 import re
 import sys
+import warnings
 from pathlib import Path
 
 from audit_code.audit_shared import should_audit
@@ -295,7 +296,9 @@ def parse_all(files):
     trees = {}
     for p, txt in files.items():
         try:
-            trees[p] = ast.parse(txt)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                trees[p] = ast.parse(txt, filename=str(p))
         except SyntaxError as e:
             print(f"  [warn] cannot parse {p}: {e}")
     return trees
@@ -421,7 +424,11 @@ def _collect_decorator_wired(defs):
     wired: set[str] = set()
     for fpath, fnames in file_defs.items():
         try:
-            tree = ast.parse(Path(fpath).read_text(encoding="utf-8"))
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree = ast.parse(
+                    Path(fpath).read_text(encoding="utf-8"), filename=str(fpath)
+                )
         except (OSError, SyntaxError, UnicodeDecodeError):
             continue
         is_migration = _is_alembic_migration(tree)
@@ -517,7 +524,9 @@ def blank_mirror_span(prod):
             out[p] = t
             continue
         try:
-            tree = ast.parse(t)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree = ast.parse(t, filename=str(p))
         except SyntaxError:
             out[p] = t
             continue
@@ -767,7 +776,9 @@ def audit_shadowed_config(dead_keys, prod):
     blanked = {}
     for p, t in blank_mirror_span(prod).items():
         try:
-            blanked[p] = ast.parse(t)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                blanked[p] = ast.parse(t, filename=str(p))
         except SyntaxError:
             pass
     for p, tree in blanked.items():

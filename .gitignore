@@ -35,6 +35,7 @@ htmlcov/
 
 # Audit tool outputs
 *.phl
+audit_result.json
 .requirements
 
 # Temp

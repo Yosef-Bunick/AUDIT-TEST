@@ -142,6 +142,7 @@ import collections
 import json
 import re
 import sys
+import warnings
 from pathlib import Path
 
 from audit_code.audit_shared import should_audit
@@ -896,7 +897,9 @@ def main():
     for p, txt in prod.items():
         sink.register(rel(p), txt)
         try:
-            trees[p] = ast.parse(txt)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                trees[p] = ast.parse(txt, filename=str(p))
         except SyntaxError as e:
             print(f"[warn] cannot parse {rel(p)}: {e}")
 
