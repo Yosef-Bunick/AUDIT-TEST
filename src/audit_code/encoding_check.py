@@ -14,6 +14,7 @@ false-fail.  Skip/exclude and focus-group rules are honoured via should_audit.
 """
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from audit_code.audit_shared import (
@@ -39,25 +40,35 @@ def scan(root: Path, encoding: str) -> tuple[list[tuple[Path, int, str]], int]:
     Each failure is (path, byte_offset, reason) for a file that does NOT decode
     under *encoding*.
     """
-    failures: list[tuple[Path, int, str]] = []
-    checked = 0
+    candidates: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
         for fn in filenames:
             p = Path(dirpath) / fn
-            if not should_audit(p):
-                continue
-            try:
-                raw = p.read_bytes()
-            except OSError:
-                continue
-            if _looks_binary(raw):
-                continue
-            checked += 1
-            try:
-                raw.decode(encoding)
-            except UnicodeDecodeError as e:
-                failures.append((p, e.start, e.reason))
+            if should_audit(p):
+                candidates.append(p)
+
+    def _check(p: Path) -> tuple[Path, int, str] | bool | None:
+        """None = unreadable, False = binary, True = ok, tuple = failure."""
+        try:
+            raw = p.read_bytes()
+        except OSError:
+            return None
+        if _looks_binary(raw):
+            return False
+        try:
+            raw.decode(encoding)
+        except UnicodeDecodeError as e:
+            return (p, e.start, e.reason)
+        return True
+
+    # Reads dominate on a cold filesystem cache and release the GIL —
+    # thread-pooling them cuts the wall time several-fold on large trees.
+    with ThreadPoolExecutor(max_workers=min(16, (os.cpu_count() or 4) * 2)) as ex:
+        results = list(ex.map(_check, candidates))
+
+    failures = [r for r in results if isinstance(r, tuple)]
+    checked = sum(1 for r in results if r is True) + len(failures)
     return failures, checked
 
 

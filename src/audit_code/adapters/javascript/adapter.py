@@ -54,13 +54,27 @@ class JavaScriptAdapter(LanguageAdapter):
 
         budget = TimeBudget()
         checked = 0
-        for f in plain[:MAX_PER_FILE_CHECKS]:
+
+        def _node_check(f):
             if budget.exhausted():
+                return f, None
+            rc, out, err = run_tool([node, "--check", str(f)], root, timeout=30)
+            return f, (rc, out, err)
+
+        # One subprocess per file is latency-bound, not CPU-bound — run a
+        # handful concurrently. Results are consumed in submission order, so
+        # findings stay deterministic.
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            results = list(ex.map(_node_check, plain[:MAX_PER_FILE_CHECKS]))
+        for f, res in results:
+            if res is None:
                 notes.append(
                     f"time budget exhausted after {checked}/{len(plain)} JS files"
                 )
                 break
-            rc, out, err = run_tool([node, "--check", str(f)], root, timeout=30)
+            rc, out, err = res
             checked += 1
             if rc != 0:
                 err_lines = (err or out).strip().splitlines()
