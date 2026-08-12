@@ -41,7 +41,10 @@ def test_run_suite_broken_multilang_fails(tmp_path, monkeypatch, capsys):
         "<html><body><div>hi</span></body></html>", encoding="utf-8"
     )
 
-    results = runner.run_suite(tmp_path, mode="min")
+    # severity="MEDIUM": the html tag-imbalance is a MEDIUM finding, and the
+    # default HIGH-only floor (uniform since the runner-level floor landed)
+    # would legitimately report that row as PASS.
+    results = runner.run_suite(tmp_path, mode="min", severity="MEDIUM")
     by_id = {r.audit_id: r for r in results}
 
     assert by_id["python-syntax"].status == AuditStatus.FAIL
@@ -49,6 +52,26 @@ def test_run_suite_broken_multilang_fails(tmp_path, monkeypatch, capsys):
     assert by_id["html-syntax"].status == AuditStatus.WARN
     assert by_id["quality"].is_failure  # Q0 catches broken.py without tools
     assert any(r.is_failure for r in results)
+
+
+def test_severity_floor_uniform_across_modules(tmp_path, monkeypatch, capsys):
+    """Default HIGH-only mode must floor EVERY module (polyglot included),
+    not just the Python phd audit: a MEDIUM-only row reads PASS with zeroed
+    counts and no findings; -m restores it."""
+    _no_external_tools(monkeypatch)
+    (tmp_path / "broken.html").write_text(
+        "<html><body><div>hi</span></body></html>", encoding="utf-8"
+    )
+
+    results = runner.run_suite(tmp_path, mode="min", severity="HIGH")
+    row = {r.audit_id: r for r in results}["html-syntax"]
+    assert row.status == AuditStatus.PASS
+    assert row.medium == 0 and not row.findings
+
+    results = runner.run_suite(tmp_path, mode="min", severity="MEDIUM")
+    row = {r.audit_id: r for r in results}["html-syntax"]
+    assert row.status == AuditStatus.WARN
+    assert row.medium >= 1 and row.findings
 
 
 def test_run_suite_clean_multilang_passes(tmp_path, monkeypatch, capsys):

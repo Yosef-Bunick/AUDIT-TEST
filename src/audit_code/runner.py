@@ -80,6 +80,14 @@ def run_suite(
     # so any entry into the runner is safe. Idempotent; guarded for capture bufs.
     force_utf8_streams()
 
+    # Enforce the -h/-m severity floor uniformly. Historically only the
+    # Python phd audit honoured it — polyglot, quality and the standalone
+    # linters reported MEDIUM/INFO even in the default HIGH-only mode.
+    # _run_step applies it to every result so the live lines, the summary
+    # table and the JSON/SARIF reports all tell the same story.
+    global _SEVERITY_FLOOR
+    _SEVERITY_FLOOR = severity
+
     results: list[AuditResult] = []
     start = time.monotonic()
 
@@ -400,6 +408,7 @@ def run_suite(
     if suite_bg is not None:
         suite_result = suite_bg_future.result()
         suite_result.duration_seconds = 0
+        _apply_severity_floor(suite_result, severity)
         results.append(suite_result)
         suite_bg.shutdown(wait=False)
 
@@ -422,6 +431,32 @@ def run_suite(
     return results
 
 
+# Set by run_suite; read by _run_step so every step's result is floored
+# before its live progress line prints.
+_SEVERITY_FLOOR: str | None = None
+
+
+def _apply_severity_floor(result: AuditResult, severity: str | None) -> None:
+    """Drop findings/counts below the requested floor ("HIGH" or "MEDIUM").
+
+    Full stdout detail is kept — only the structured counts, findings and the
+    PASS/WARN verdict are trimmed. FAIL/CRASH/ERROR/SKIP are never upgraded.
+    """
+    drop = {"HIGH": ("MEDIUM", "INFO"), "MEDIUM": ("INFO",)}.get(severity or "")
+    if not drop:
+        return
+    result.findings = [f for f in result.findings if f.severity.value not in drop]
+    if "MEDIUM" in drop:
+        result.medium = 0
+    result.info = 0
+    if (
+        result.status == AuditStatus.WARN
+        and not (result.high or result.medium or result.info)
+        and not result.findings
+    ):
+        result.status = AuditStatus.PASS
+
+
 def _run_step(results: list, audit_id: str, description: str, fn) -> None:
     """Run one audit step with timing, crash capture, and progress output."""
     progress = f"  [{audit_id:16}] {description} ... "
@@ -436,6 +471,7 @@ def _run_step(results: list, audit_id: str, description: str, fn) -> None:
             stderr=f"{type(exc).__name__}: {exc}",
         )
     result.duration_seconds = round(time.monotonic() - step_start, 1)
+    _apply_severity_floor(result, _SEVERITY_FLOOR)
     results.append(result)
     line = f"  [{_status_char(result.status)}] {audit_id:16} {_detail_line(result)}"
     print(f"\r{line}{' ' * max(0, len(progress) - len(line))}")
