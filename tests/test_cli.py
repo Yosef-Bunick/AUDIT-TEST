@@ -62,6 +62,8 @@ def _args(**overrides) -> argparse.Namespace:
         "bandit": False,
         "fast": False,
         "skip": "",
+        "deps": False,
+        "req": False,
     }
     base.update(overrides)
     return argparse.Namespace(**base)

@@ -937,7 +937,9 @@ def main():
                     break
 
         # SEC5 - SQLite without FK enforcement
-        has_sqlite = "sqlite" in txt.lower()
+        # connection-string / module signal only — the bare word "sqlite" in a
+        # comment or docstring must not implicate a generic create_engine(url)
+        has_sqlite = "sqlite:" in txt.lower() or "sqlite3" in txt
         has_fk = "PRAGMA foreign_keys" in txt or "foreign_keys" in txt.lower()
         if has_sqlite and not has_fk and "create_engine" in txt:
             sink.add(
@@ -1094,6 +1096,10 @@ def main():
             )
         for m in SECRET_ASSIGN_RE.finditer(txt):
             if SECRET_PLACEHOLDER_RE.search(m.group(1)):
+                continue
+            # snake_case identifier-shaped value (e.g. a dict-key-name
+            # constant like API_KEY_INFO_KEY = "api_key_id") — not a secret
+            if re.fullmatch(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+", m.group(1)):
                 continue
             line = txt.count("\n", 0, m.start()) + 1
             sink.add(

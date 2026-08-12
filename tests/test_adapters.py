@@ -195,6 +195,54 @@ def test_js_valid_passes(tmp_path):
     assert result.status == AuditStatus.PASS
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js not installed")
+def test_jsx_valid_passes(tmp_path):
+    """JSX with an `in` attribute, bare `&` text, and TSX annotations — all
+    valid to Babel/tsc — must not be reported as parse errors (regression:
+    the plain-JS grammar rejected these)."""
+    (tmp_path / "ok.jsx").write_text(
+        "export const A = ({open}) => (\n"
+        "  <Collapse in={open}><p>Sync & Import</p></Collapse>\n"
+        ");\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "ok.tsx").write_text(
+        "export default function L({ children }: { children: any }) {\n"
+        "  return <main>{children}</main>;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    result = JavaScriptAdapter.syntax_check(tmp_path)
+    assert result.status == AuditStatus.PASS, result.findings
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js not installed")
+def test_jsx_double_ampersand_text_passes(tmp_path):
+    (tmp_path / "ok.jsx").write_text(
+        "export const A = () => (<pre>cd backend && npm start</pre>);\n",
+        encoding="utf-8",
+    )
+    result = JavaScriptAdapter.syntax_check(tmp_path)
+    assert result.status == AuditStatus.PASS, result.findings
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js not installed")
+def test_jsx_nul_byte_reported_honestly(tmp_path):
+    (tmp_path / "nul.jsx").write_bytes(b"const s = '\x00';\nexport default s;\n")
+    result = JavaScriptAdapter.syntax_check(tmp_path)
+    assert result.status == AuditStatus.FAIL
+    assert "NUL byte" in result.findings[0].message
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js not installed")
+def test_jsx_broken_fails(tmp_path):
+    (tmp_path / "bad.jsx").write_text(
+        "export const A = () => (<div><span></div>);\n", encoding="utf-8"
+    )
+    result = JavaScriptAdapter.syntax_check(tmp_path)
+    assert result.status == AuditStatus.FAIL
+
+
 @pytest.mark.skipif(shutil.which("gofmt") is None, reason="Go toolchain not installed")
 def test_go_syntax_error_fails(tmp_path):
     (tmp_path / "bad.go").write_text("package main\n\nfunc main( {\n", encoding="utf-8")

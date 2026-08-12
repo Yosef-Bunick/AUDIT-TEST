@@ -348,7 +348,14 @@ def run_suite(
                     "quality",
                     quality_entry[1],
                     lambda: _run_one_module(
-                        target_root, "quality", mode, fix, severity, fast, shared_cov, req=req
+                        target_root,
+                        "quality",
+                        mode,
+                        fix,
+                        severity,
+                        fast,
+                        shared_cov,
+                        req=req,
                     ),
                 )
         finally:
@@ -457,7 +464,7 @@ def _run_test_suite(target_root: Path, language: str, cmd: list) -> AuditResult:
         audit_id=f"{language}-tests",
         status=status,
         stdout=f"$ {' '.join(str(c) for c in cmd)}\n{tail}",
-        high=0 if status == AuditStatus.PASS else 1,
+        high=1 if status == AuditStatus.FAIL else 0,
     )
 
 
@@ -595,6 +602,8 @@ def _detail_line(result: AuditResult) -> str:
         return result.stderr[:80]
     if result.status == AuditStatus.SKIP:
         reason = (result.stdout.strip().splitlines() or ["skipped"])[0]
+        if reason.upper().startswith("SKIP:"):
+            reason = reason[5:].lstrip()
         return f"SKIP: {reason}"[:80]
     if result.status == AuditStatus.PASS:
         return "clean"

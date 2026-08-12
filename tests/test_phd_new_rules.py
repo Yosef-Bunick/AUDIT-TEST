@@ -331,6 +331,23 @@ def test_sec3_skips_env_lookup(tmp_path):
     assert not data.get("SEC3"), "env-sourced secret should skip"
 
 
+def test_sec3_skips_snake_case_key_name_value(tmp_path):
+    data = _run_phd(tmp_path, 'API_KEY_INFO_KEY = "api_key_id"\n')
+    assert not data.get("SEC3"), "identifier-shaped value is a key name, not a secret"
+
+
+def test_sec5_skips_sqlite_only_in_prose(tmp_path):
+    data = _run_phd(
+        tmp_path,
+        "from sqlalchemy import create_engine\n"
+        "import os\n\n\n"
+        "def get_engine():\n"
+        '    """Build an engine from DATABASE_URL (SQLite has no RLS)."""\n'
+        "    return create_engine(os.environ['DATABASE_URL'])\n",
+    )
+    assert not data.get("SEC5"), "sqlite in a docstring must not implicate the engine"
+
+
 def test_sec5_flags_sqlite_without_fk_pragma(tmp_path):
     data = _run_phd(
         tmp_path,

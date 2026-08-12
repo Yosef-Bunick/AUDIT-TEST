@@ -116,18 +116,30 @@ class JavaScriptAdapter(LanguageAdapter):
 
     @classmethod
     def _check_jsx_syntax(cls, root: Path, files: list, findings: list, budget) -> int:
-        """Fallback JSX syntax check via tree-sitter when tsc isn't available."""
+        """Fallback JSX/TS syntax check via tree-sitter when tsc isn't available.
+
+        Uses the TypeScript grammars (tsx for .tsx/.jsx, typescript for .ts):
+        the plain-JS grammar rejects valid code — TS type annotations, and even
+        JSX attributes named `in` — producing false parse errors.
+        """
         try:
             import tree_sitter as ts
-            import tree_sitter_javascript as tsjs
             from tree_sitter import Language
         except ImportError:
             return 0
         try:
-            js_lang = Language(tsjs.language())
-            parser = ts.Parser(js_lang)
+            import tree_sitter_typescript as tst
+
+            tsx_parser = ts.Parser(Language(tst.language_tsx()))
+            ts_parser = ts.Parser(Language(tst.language_typescript()))
         except Exception:
-            return 0
+            # last resort: JS grammar (JSX-capable, but no TS annotations)
+            try:
+                import tree_sitter_javascript as tsjs
+
+                tsx_parser = ts_parser = ts.Parser(Language(tsjs.language()))
+            except Exception:
+                return 0
 
         checked = 0
         for f in files[:MAX_PER_FILE_CHECKS]:
@@ -137,11 +149,27 @@ class JavaScriptAdapter(LanguageAdapter):
                 text = f.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
+            if "\x00" in text:
+                # a NUL truncates tree-sitter's lexer mid-file, producing a
+                # misleading parse error — report the real problem instead
+                findings.append(
+                    cls.finding(
+                        "NUL byte in source — invisible in editors, breaks "
+                        "many parsers",
+                        file=rel(f, root),
+                        line=text[: text.index("\x00")].count("\n") + 1,
+                    )
+                )
+                checked += 1
+                continue
+            parser = ts_parser if f.suffix == ".ts" else tsx_parser
             tree = parser.parse(text.encode())
             if tree.root_node.has_error:
-                # Find the error node
+                # Find the first real error node
                 for node in _walk_ts(tree.root_node):
                     if node.type == "ERROR" or node.is_missing:
+                        if cls._is_bare_ampersand_error(node):
+                            continue  # grammar limitation, not a syntax error
                         findings.append(
                             cls.finding(
                                 f"parse error near '{text[max(0,node.start_byte-10):node.end_byte+10]}'",
@@ -152,6 +180,18 @@ class JavaScriptAdapter(LanguageAdapter):
                         break
             checked += 1
         return checked
+
+    @staticmethod
+    def _is_bare_ampersand_error(node) -> bool:
+        """True when an ERROR node is just a bare `&` in JSX text.
+
+        tree-sitter's JSX grammars only accept `&` as the start of an HTML
+        entity, so plain text like `Sync & Import` — valid to Babel/esbuild —
+        parses as an ERROR whose children include a lone `&` (or `&&`) token.
+        """
+        return node.type == "ERROR" and any(
+            c.type in ("&", "&&") for c in node.children
+        )
 
     @staticmethod
     def _find_tsc(root: Path) -> list | None:
