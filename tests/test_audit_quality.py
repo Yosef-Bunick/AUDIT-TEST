@@ -88,6 +88,49 @@ def test_q_cves_runs(tmp_path, capsys):
     assert "Q4" in capsys.readouterr().out
 
 
+_PIP_AUDIT_JSON = (
+    '{"dependencies": ['
+    '{"name": "Flask", "version": "3.0.0", "vulns": [{"id": "PYSEC-2026-2151"}]},'
+    '{"name": "requests", "version": "2.31.0", "vulns": [{"id": "CVE-2024-35195"}]},'
+    '{"name": "numpy", "version": "1.26.0", "vulns": []}]}'
+)
+
+
+def test_q_cves_scopes_to_declared_deps(tmp_path, capsys, monkeypatch):
+    """A vulnerable env package the project never declared must not count;
+    a declared one must."""
+    (tmp_path / "requirements.txt").write_text("flask==3.0.0\n", encoding="utf-8")
+    monkeypatch.setattr(q, "_tool", lambda name: "pip-audit")
+    monkeypatch.setattr(q, "_run", lambda *a, **k: (1, _PIP_AUDIT_JSON))
+    counts = _counts()
+    q.q_cves(tmp_path, counts)
+    out = capsys.readouterr().out
+    assert counts["HIGH"] == 1, "only the declared vulnerable package counts"
+    assert "flask 3.0.0" in out and "PYSEC-2026-2151" in out
+    assert "requests" in out and "not counted" in out
+
+
+def test_q_cves_no_manifest_scans_environment(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(q, "_tool", lambda name: "pip-audit")
+    monkeypatch.setattr(q, "_run", lambda *a, **k: (1, _PIP_AUDIT_JSON))
+    counts = _counts()
+    q.q_cves(tmp_path, counts)
+    assert counts["HIGH"] == 2, "no manifest -> every vulnerable package counts"
+
+
+def test_declared_deps_reads_pyproject_and_requirements(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["Flask>=3", "ruff"]\n'
+        '[project.optional-dependencies]\nall = ["Semgrep==1.0"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "requirements-dev.txt").write_text(
+        "# dev tools\npytest_xdist==3.5\n-r other.txt\n", encoding="utf-8"
+    )
+    deps = q._declared_deps(tmp_path)
+    assert deps == {"flask", "ruff", "semgrep", "pytest-xdist"}
+
+
 def test_q_mutation_disabled_is_skip(tmp_path, capsys):
     counts = _counts()
     q.q_mutation(tmp_path, counts, enabled=False)

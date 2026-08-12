@@ -410,12 +410,141 @@ def _q3_mypy(target_root, root, strict_mypy, findings, counts, out):
     out.append("")
 
 
+_REQ_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+def _normalize_pkg(name: str) -> str:
+    """PEP 503 normalization: lowercase, runs of -_. collapse to -."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _manifest_root(root: Path) -> Path:
+    """The directory whose dependency manifests govern *root*.
+
+    An audit often targets a package subdirectory (e.g. src/pkg) while
+    pyproject/requirements live at the project root — walk up until a
+    manifest is found, stopping at a .git boundary (inclusive) or after
+    a few levels.
+    """
+    cur = root
+    for _ in range(4):
+        if (cur / "pyproject.toml").exists() or any(cur.glob("requirements*.txt")):
+            return cur
+        if (cur / ".git").exists() or cur.parent == cur:
+            break
+        cur = cur.parent
+    return root
+
+
+def _declared_dependencies(root: Path) -> set[str]:
+    """Top-level dependency names declared by the project (normalized).
+
+    Sources: [project] dependencies + optional-dependencies and
+    [tool.poetry.dependencies] in pyproject.toml, plus requirements*.txt —
+    looked up from the nearest manifest-bearing ancestor of *root* (audits
+    frequently target a package subdir). Empty set = no manifest found.
+    """
+    names: set[str] = set()
+    root = _manifest_root(root)
+    pyproject = root / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            import tomllib
+        except ImportError:  # pragma: no cover - py<3.11
+            tomllib = None
+        if tomllib is not None:
+            try:
+                data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                data = {}
+            proj = data.get("project") or {}
+            specs = list(proj.get("dependencies") or [])
+            for extra in (proj.get("optional-dependencies") or {}).values():
+                specs.extend(extra)
+            for spec in specs:
+                m = _REQ_NAME_RE.match(str(spec))
+                if m:
+                    names.add(_normalize_pkg(m.group(1)))
+            poetry = (data.get("tool") or {}).get("poetry") or {}
+            for name in poetry.get("dependencies") or {}:
+                if name.lower() != "python":
+                    names.add(_normalize_pkg(name))
+    for req in root.glob("requirements*.txt"):
+        try:
+            lines = req.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith(("#", "-")):
+                continue
+            m = _REQ_NAME_RE.match(line)
+            if m:
+                names.add(_normalize_pkg(m.group(1)))
+    return names
+
+
 def _q4_cves(target_root, root, findings, counts, out):
-    """Q4: known CVEs in installed dependencies (pip-audit or safety)."""
+    """Q4: known CVEs in dependencies.
+
+    Scope: the installed environment is scanned, but findings are limited to
+    packages the project actually declares (pyproject/requirements) — a shared
+    interpreter full of other projects' packages must not fail this audit.
+    Config: [quality] cve_scope = "auto" (default) | "project" | "environment".
+    """
+    from audit_code.config import load_project_config
+
+    scope = str(
+        (load_project_config(root).get("quality") or {}).get("cve_scope", "auto")
+    ).lower()
+    declared = _declared_dependencies(root) if scope != "environment" else set()
+    project_scope = bool(declared) or scope == "project"
+
     out.append("=" * 74)
-    out.append("Q4 [HIGH] known CVEs in installed dependencies")
+    label = "declared dependencies" if project_scope else "installed dependencies"
+    out.append(f"Q4 [HIGH] known CVEs in {label}")
     out.append("=" * 74)
     cve_found = False
+
+    pip_audit = _tool("pip-audit", target_root)
+    if pip_audit:
+        rc, res = _run(
+            pip_audit.split() + ["--progress-spinner", "off", "-f", "json"],
+            root,
+            timeout=300,
+        )
+        vulnerable = _q4_parse_pip_audit(res)
+        if vulnerable is not None and rc not in (-1, -2):
+            if project_scope:
+                skipped = [v for v in vulnerable if v[0] not in declared]
+                vulnerable = [v for v in vulnerable if v[0] in declared]
+                if skipped:
+                    out.append(
+                        f"  {len(skipped)} vulnerable package(s) in the "
+                        "environment are not declared by this project — "
+                        "not counted: "
+                        + ", ".join(sorted({name for name, _, _ in skipped})[:10])
+                    )
+            if not vulnerable:
+                suffix = " (declared deps)" if project_scope else ""
+                out.append(f"  pip-audit: no known vulnerabilities{suffix}")
+                out.append("")
+                return
+            counts["HIGH"] += len(vulnerable)
+            for name, version, vuln_ids in vulnerable:
+                out.append(f"  {name} {version}: {', '.join(vuln_ids)}")
+                findings.append(
+                    Finding(
+                        rule_id="Q4",
+                        severity=Severity.HIGH,
+                        message=f"{name} {version} has known vulnerabilities: "
+                        f"{', '.join(vuln_ids)}",
+                        source="quality",
+                    )
+                )
+            out.append("")
+            return
+
     for name, cargs in (
         ("pip-audit", ["--progress-spinner", "off"]),
         ("safety", ["check", "--output", "text"]),
@@ -448,6 +577,29 @@ def _q4_cves(target_root, root, findings, counts, out):
     if not cve_found:
         out.append("  SKIP: neither pip-audit nor safety installed")
     out.append("")
+
+
+def _q4_parse_pip_audit(res: str) -> list[tuple[str, str, list[str]]] | None:
+    """Parse pip-audit JSON into [(normalized_name, version, [vuln ids])].
+
+    None = output was not parseable JSON (caller falls back to text mode).
+    """
+    try:
+        data = json.loads(res[res.index("{") : res.rindex("}") + 1])
+    except (ValueError, json.JSONDecodeError):
+        return None
+    vulnerable = []
+    for dep in data.get("dependencies", []):
+        vulns = dep.get("vulns") or []
+        if vulns:
+            vulnerable.append(
+                (
+                    _normalize_pkg(dep.get("name", "")),
+                    dep.get("version", "?"),
+                    [v.get("id", "?") for v in vulns],
+                )
+            )
+    return vulnerable
 
 
 def _q5_obtain_coverage(root, tests_dir, pytest_extra, shared_cov, tmp, cache_key, out):

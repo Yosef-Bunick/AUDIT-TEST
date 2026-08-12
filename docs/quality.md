@@ -27,8 +27,21 @@ With `--strict-mypy`: adds `--strict`.
 SKIP if mypy not installed.
 
 ## Q4 — CVE scan [HIGH]
-Tries `pip-audit` first, falls back to `safety check`. Counts vulnerability signals.
-SKIP if neither tool installed.
+Tries `pip-audit` first (JSON mode, one finding per vulnerable package), falls
+back to `safety check`. SKIP if neither tool installed.
+
+**Scope:** when the project declares dependencies (`pyproject.toml`
+`[project]`/poetry tables, `requirements*.txt`), findings are limited to those
+declared packages — vulnerable packages that merely share the interpreter
+(other projects' installs) are listed but **not counted**. With no manifest the
+whole environment counts, as before. Override in `audit-code.toml`:
+
+```toml
+[quality]
+cve_scope = "auto"   # default: declared deps when a manifest exists
+# cve_scope = "environment"  # always count the whole interpreter
+# cve_scope = "project"      # always scope to declared deps
+```
 
 ## Q5 — Per-def execution coverage [MEDIUM]
 Runs the full test suite under `coverage.py`, maps executed lines onto every function/class def body via AST span analysis.

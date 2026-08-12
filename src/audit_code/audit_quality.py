@@ -265,8 +265,102 @@ def q_mypy(root: Path, counts: dict, strict: bool):
 # ── Q4: dependency CVEs ──────────────────────────────────────────────────────
 
 
+def _declared_deps(root: Path) -> set:
+    """Top-level dependency names (PEP 503 normalized) from pyproject.toml /
+    requirements*.txt. Empty set = no manifest."""
+
+    def norm(n):
+        return re.sub(r"[-_.]+", "-", n).lower()
+
+    name_re = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+    names: set = set()
+    # audits often target a package subdir — walk up to the manifest holder
+    cur = root
+    for _ in range(4):
+        if (cur / "pyproject.toml").exists() or any(cur.glob("requirements*.txt")):
+            root = cur
+            break
+        if (cur / ".git").exists() or cur.parent == cur:
+            break
+        cur = cur.parent
+    pyproject = root / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            import tomllib
+
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        except (ImportError, OSError, ValueError):
+            data = {}
+        proj = data.get("project") or {}
+        specs = list(proj.get("dependencies") or [])
+        for extra in (proj.get("optional-dependencies") or {}).values():
+            specs.extend(extra)
+        for spec in specs:
+            m = name_re.match(str(spec))
+            if m:
+                names.add(norm(m.group(1)))
+        poetry = (data.get("tool") or {}).get("poetry") or {}
+        names |= {
+            norm(n) for n in poetry.get("dependencies") or {} if n.lower() != "python"
+        }
+    for req in root.glob("requirements*.txt"):
+        try:
+            for line in req.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line and not line.startswith(("#", "-")):
+                    m = name_re.match(line)
+                    if m:
+                        names.add(norm(m.group(1)))
+        except OSError:
+            continue
+    return names
+
+
 def q_cves(root: Path, counts: dict):
-    _section("Q4", "HIGH", "known CVEs in installed dependencies")
+    """Q4 — scoped to the project's declared deps when a manifest exists,
+    so a shared interpreter's unrelated packages don't fail the audit."""
+    declared = _declared_deps(root)
+    scope = "declared" if declared else "installed"
+    _section("Q4", "HIGH", f"known CVEs in {scope} dependencies")
+
+    tool = _tool("pip-audit")
+    if tool:
+        rc, out = _run(
+            tool.split() + ["--progress-spinner", "off", "-f", "json"],
+            root,
+            timeout=300,
+        )
+        try:
+            data = json.loads(out[out.index("{") : out.rindex("}") + 1])
+        except (ValueError, json.JSONDecodeError):
+            data = None
+        if data is not None and rc not in (-1, -2):
+            bad = [
+                (
+                    re.sub(r"[-_.]+", "-", d.get("name", "")).lower(),
+                    d.get("version", "?"),
+                    [v.get("id", "?") for v in d.get("vulns") or []],
+                )
+                for d in data.get("dependencies", [])
+                if d.get("vulns")
+            ]
+            if declared:
+                excluded = sorted({n for n, _, _ in bad if n not in declared})
+                bad = [b for b in bad if b[0] in declared]
+                if excluded:
+                    print(
+                        f"  {len(excluded)} vulnerable package(s) not declared "
+                        f"by this project — not counted: {', '.join(excluded[:10])}"
+                    )
+            if not bad:
+                print(f"  pip-audit: no known vulnerabilities ({scope} deps)\n")
+                return
+            counts["HIGH"] += len(bad)
+            for name, version, ids in bad:
+                print(f"  {name} {version}: {', '.join(ids)}")
+            print()
+            return
+
     for name, args in (
         ("pip-audit", ["--progress-spinner", "off"]),
         ("safety", ["check", "--output", "text"]),
