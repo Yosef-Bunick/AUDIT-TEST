@@ -6,16 +6,14 @@ startup overhead. collect_dead_symbols() still subprocesses for the
 profiler (lower priority path).
 """
 
-import io
 import json
 import re
 import subprocess
 import sys
 import tempfile
-from contextlib import redirect_stdout
 from pathlib import Path
 
-from audit_code.audit_shared import utf8_subprocess_env
+from audit_code.audit_shared import thread_capture_stdout, utf8_subprocess_env
 from audit_code.models import (
     AuditResult,
     AuditStatus,
@@ -38,25 +36,19 @@ def run(target_root: Path, strict: bool = True) -> AuditResult:
     # Reset ROOT — module-level state persists across calls in-process
     audit_wiring.ROOT = target_root.resolve()
 
-    saved_argv = sys.argv[:]
-    buf = io.StringIO()
+    # explicit argv + thread-local capture: background wrapper threads (deps,
+    # linters) must not see our flags or steal/leak our stdout mid-run
     try:
-        sys.argv = [
-            "audit_wiring",
-            "--path",
-            str(target_root),
-        ]
+        with thread_capture_stdout() as buf:
+            audit_wiring.main(["audit_wiring", "--path", str(target_root)])
+    except Exception:
+        import traceback
 
-        with redirect_stdout(buf):
-            audit_wiring.main()
-    except Exception as exc:
         return AuditResult(
             audit_id="wiring",
             status=AuditStatus.CRASH,
-            stderr=f"audit_wiring.main() raised: {exc}",
+            stderr=f"audit_wiring.main() raised:\n{traceback.format_exc()}",
         )
-    finally:
-        sys.argv = saved_argv
 
     out = buf.getvalue()
     high = med = info = 0
@@ -81,6 +73,12 @@ def run(target_root: Path, strict: bool = True) -> AuditResult:
             audit_id="wiring",
             status=AuditStatus.CRASH,
             stdout=out,
+            # the summary line is the completion proof — say exactly what we
+            # got instead, so an intermittent repro diagnoses itself
+            stderr=(
+                f"wiring output has no SUMMARY line ({len(out)} bytes "
+                f"captured; tail: {out.strip()[-120:]!r})"
+            ),
         )
 
     status = (

@@ -13,9 +13,12 @@ used by the `check` command to verify every file decodes under that codec.
 """
 
 import codecs
+import io
 import os
 import sys
+import threading
 from collections import namedtuple
+from contextlib import contextmanager
 from pathlib import Path
 
 Group = namedtuple("Group", "files path description")
@@ -72,6 +75,72 @@ def force_utf8_streams() -> None:
             stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
         except (AttributeError, OSError):
             pass
+
+
+class _ThreadStdoutRouter(io.TextIOBase):
+    """sys.stdout proxy that routes writes to a per-thread target.
+
+    contextlib.redirect_stdout swaps the PROCESS-GLOBAL sys.stdout, so when a
+    background thread's capture exits it restores the console while another
+    thread's capture is still active — that thread's output silently leaks to
+    the console and its buffer stays empty (the intermittent "phd/wiring CRASH,
+    no SUMMARY, 0 bytes captured" flake: deps runs concurrently with the deep
+    audits). Routing per-thread makes captures independent.
+    """
+
+    def __init__(self, base):
+        self._base = base
+        self._local = threading.local()
+
+    def _target(self):
+        return getattr(self._local, "target", None) or self._base
+
+    def write(self, s):
+        return self._target().write(s)
+
+    def flush(self):
+        try:
+            return self._target().flush()
+        except ValueError:  # target closed between write and flush
+            pass
+
+    def writable(self):
+        return True
+
+    @property
+    def encoding(self):
+        return getattr(self._base, "encoding", "utf-8")
+
+    def reconfigure(self, **kwargs):
+        try:
+            self._base.reconfigure(**kwargs)
+        except (AttributeError, OSError):
+            pass
+
+    def isatty(self):
+        try:
+            return self._base.isatty()
+        except ValueError:
+            return False
+
+
+@contextmanager
+def thread_capture_stdout():
+    """Capture THIS thread's stdout into a StringIO; other threads unaffected.
+
+    The drop-in replacement for contextlib.redirect_stdout inside the audit
+    wrappers — see _ThreadStdoutRouter for why the global swap is unsafe here.
+    """
+    if not isinstance(sys.stdout, _ThreadStdoutRouter):
+        sys.stdout = _ThreadStdoutRouter(sys.stdout)
+    router = sys.stdout
+    buf = io.StringIO()
+    prev = getattr(router._local, "target", None)
+    router._local.target = buf
+    try:
+        yield buf
+    finally:
+        router._local.target = prev
 
 
 # Environment additions that force a spawned Python worker to start with UTF-8
@@ -217,3 +286,70 @@ def should_audit(
     if paths is not None:
         return path.name in paths
     return True
+
+
+def iter_py_files(root: Path):
+    """Yield every auditable .py file under *root* — the fast, canonical walk.
+
+    Equivalent to ``root.rglob("*.py")`` + :func:`should_audit`, but prunes
+    SKIP_PARTS directories *during* the walk instead of enumerating and then
+    discarding them — on a tree with a .venv/node_modules this is orders of
+    magnitude fewer stat calls. Focus groups are still honoured.
+    """
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_PARTS]
+        for fn in filenames:
+            if not fn.endswith(".py"):
+                continue
+            p = Path(dirpath) / fn
+            if should_audit(p):
+                yield p
+
+
+# path str -> (text_hash, text, tree|None, syntax_error|None). Keyed on
+# content, not mtime, so same-size rewrites within timestamp resolution can
+# never serve a stale tree. wiring→phd→runtime run in one process and parse
+# the same files — this collapses three reads+parses into one.
+_PARSE_CACHE: dict = {}
+
+
+def read_and_parse(p: Path) -> tuple[str | None, object | None, str | None]:
+    """Cached (text, ast_tree, syntax_error) for a source file.
+
+    text is None if unreadable. tree is None when the file does not parse,
+    with syntax_error carrying the message. Trees are shared objects —
+    callers may attach analysis attributes but must not restructure them.
+    """
+
+    try:
+        txt = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None, None, None
+    tree, err = parse_text(p, txt)
+    return txt, tree, err
+
+
+def parse_text(p: Path, txt: str) -> tuple[object | None, str | None]:
+    """Cached (ast_tree, syntax_error) for text the caller already read.
+
+    The fast path for the wiring→phd→runtime pipeline: each module holds the
+    source text from its collect step, so only the parse is deduplicated —
+    no second disk read just to revalidate the cache.
+    """
+    import ast
+    import warnings
+
+    key = str(p)
+    h = hash(txt)
+    hit = _PARSE_CACHE.get(key)
+    if hit is not None and hit[0] == h:
+        return hit[2], hit[3]
+    tree, err = None, None
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(txt, filename=str(p))
+    except SyntaxError as e:
+        err = str(e)
+    _PARSE_CACHE[key] = (h, txt, tree, err)
+    return tree, err

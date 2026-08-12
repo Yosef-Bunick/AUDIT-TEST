@@ -4,12 +4,10 @@ Answers "will it hang, crash on another machine, or run with the wrong brain?"
 Now calls audit_runtime.main() directly instead of subprocess.
 """
 
-import io
 import re
-import sys
-from contextlib import redirect_stdout
 from pathlib import Path
 
+from audit_code.audit_shared import thread_capture_stdout
 from audit_code.models import (
     AuditResult,
     AuditStatus,
@@ -25,25 +23,19 @@ def run(target_root: Path, strict: bool = True) -> AuditResult:
 
     audit_runtime.ROOT = target_root.resolve()
 
-    saved_argv = sys.argv[:]
-    buf = io.StringIO()
+    # explicit argv + thread-local capture: background wrapper threads (deps,
+    # linters) must not see our flags or steal/leak our stdout mid-run
     try:
-        sys.argv = [
-            "audit_runtime",
-            "--path",
-            str(target_root),
-        ]
+        with thread_capture_stdout() as buf:
+            audit_runtime.main(["audit_runtime", "--path", str(target_root)])
+    except Exception:
+        import traceback
 
-        with redirect_stdout(buf):
-            audit_runtime.main()
-    except Exception as exc:
         return AuditResult(
             audit_id="runtime",
             status=AuditStatus.CRASH,
-            stderr=f"audit_runtime.main() raised: {exc}",
+            stderr=f"audit_runtime.main() raised:\n{traceback.format_exc()}",
         )
-    finally:
-        sys.argv = saved_argv
 
     out = buf.getvalue()
     high = med = info = 0
@@ -56,6 +48,10 @@ def run(target_root: Path, strict: bool = True) -> AuditResult:
             audit_id="runtime",
             status=AuditStatus.CRASH,
             stdout=out,
+            stderr=(
+                f"runtime output has no SUMMARY line ({len(out)} bytes "
+                f"captured; tail: {out.strip()[-120:]!r})"
+            ),
         )
 
     status = (

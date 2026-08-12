@@ -1193,23 +1193,15 @@ def _handle_graph() -> None:  # audit: ok (CLI entry point)
 
 def _bottleneck_static(target: Path) -> dict:
     """Run the phd audit in-process, keep only BOTTLE1/BOTTLE2 findings."""
-    import io
-    from contextlib import redirect_stdout
-
     from audit_code import audit_phd
+    from audit_code.audit_shared import thread_capture_stdout
 
     audit_phd.ROOT = target.resolve()
-    saved_argv = sys.argv[:]
-    buf = io.StringIO()
-    try:
-        sys.argv = ["audit_phd", "--path", str(target), "--json"]
-        with redirect_stdout(buf):
-            try:
-                audit_phd.main()
-            except SystemExit:
-                pass  # audit: ok (json mode always exits — output is captured)
-    finally:
-        sys.argv = saved_argv
+    with thread_capture_stdout() as buf:
+        try:
+            audit_phd.main(["audit_phd", "--path", str(target), "--json"])
+        except SystemExit:
+            pass  # audit: ok (json mode always exits — output is captured)
 
     lines = buf.getvalue().splitlines()
     try:

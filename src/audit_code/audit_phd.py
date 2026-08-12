@@ -130,10 +130,9 @@ import collections
 import json
 import re
 import sys
-import warnings
 from pathlib import Path
 
-from audit_code.audit_shared import should_audit
+from audit_code.audit_shared import iter_py_files, parse_text, read_and_parse
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 # Allow --path override for audit-code wrapper
@@ -251,12 +250,11 @@ def is_test(p: Path) -> bool:
 
 def collect():
     prod, test = {}, {}
-    for p in ROOT.rglob("*.py"):
-        if p.name in SELF_NAMES or not should_audit(p):
+    for p in iter_py_files(ROOT):
+        if p.name in SELF_NAMES:
             continue
-        try:
-            txt = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        txt, _tree, _err = read_and_parse(p)
+        if txt is None:
             continue
         (test if is_test(p) else prod)[p] = txt
     return prod, test
@@ -502,26 +500,27 @@ class Sink:
         self.data[cid].append((f, line, msg))
 
 
-def main():
-    strict = "--strict" in sys.argv
-    as_json = "--json" in sys.argv
+def main(argv=None):
+    # explicit argv so in-process wrappers never touch the global sys.argv —
+    # a concurrent wrapper thread swapping it mid-run changed OUR flags
+    argv = sys.argv if argv is None else argv
+    strict = "--strict" in argv
+    as_json = "--json" in argv
     # --min-severity HIGH: suppress MEDIUM/INFO, only report HIGH
     min_sev = next(
-        (a.split("=")[1] for a in sys.argv if a.startswith("--min-severity=")), None
+        (a.split("=")[1] for a in argv if a.startswith("--min-severity=")), None
     )
     prod, tests = collect()
     trees = {}
     sink = Sink()
     for p, txt in prod.items():
         sink.register(rel(p), txt)
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                t = ast.parse(txt, filename=str(p))
+        t, err = parse_text(p, txt)
+        if t is not None:
             annotate(t)
             trees[p] = t
-        except SyntaxError as e:
-            print(f"[warn] cannot parse {rel(p)}: {e}")
+        elif err:
+            print(f"[warn] cannot parse {rel(p)}: {err}")
 
     # ── node-level checks ────────────────────────────────────────────────
     for p, tree in trees.items():
@@ -1774,12 +1773,9 @@ def main():
     test_trees = {}
     for tp, ttxt in tests.items():
         sink.register(rel(tp), ttxt)  # enables `# audit: ok` in tests too
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                test_trees[tp] = ast.parse(ttxt, filename=str(tp))
-        except SyntaxError:
-            pass
+        tt, _err = parse_text(tp, ttxt)
+        if tt is not None:
+            test_trees[tp] = tt
     tested_any, tested_edge = set(), set()
     blob_names = set()
     for tt in test_trees.values():

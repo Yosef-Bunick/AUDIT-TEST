@@ -7,12 +7,10 @@ Now calls audit_phd.main() directly instead of subprocess — eliminates
 Python startup overhead (~15% of audit runtime).
 """
 
-import io
 import re
-import sys
-from contextlib import redirect_stdout
 from pathlib import Path
 
+from audit_code.audit_shared import thread_capture_stdout
 from audit_code.models import (
     AuditResult,
     AuditStatus,
@@ -32,27 +30,22 @@ def run(target_root: Path, severity: str | None = "HIGH") -> AuditResult:
     # Reset ROOT — module-level state persists across calls in-process
     audit_phd.ROOT = target_root.resolve()
 
-    saved_argv = sys.argv[:]
-    buf = io.StringIO()
+    # explicit argv + thread-local capture: background wrapper threads (deps,
+    # linters) must not see our flags or steal/leak our stdout mid-run
+    argv = ["audit_phd", "--path", str(target_root)]
+    if severity:
+        argv.append(f"--min-severity={severity}")
     try:
-        sys.argv = [
-            "audit_phd",
-            "--path",
-            str(target_root),
-        ]
-        if severity:
-            sys.argv.append(f"--min-severity={severity}")
+        with thread_capture_stdout() as buf:
+            audit_phd.main(argv)
+    except Exception:
+        import traceback
 
-        with redirect_stdout(buf):
-            audit_phd.main()
-    except Exception as exc:
         return AuditResult(
             audit_id="phd",
             status=AuditStatus.CRASH,
-            stderr=f"audit_phd.main() raised: {exc}",
+            stderr=f"audit_phd.main() raised:\n{traceback.format_exc()}",
         )
-    finally:
-        sys.argv = saved_argv
 
     out = buf.getvalue()
     high = med = info = 0
@@ -65,6 +58,10 @@ def run(target_root: Path, severity: str | None = "HIGH") -> AuditResult:
             audit_id="phd",
             status=AuditStatus.CRASH,
             stdout=out,
+            stderr=(
+                f"phd output has no SUMMARY line ({len(out)} bytes "
+                f"captured; tail: {out.strip()[-120:]!r})"
+            ),
         )
 
     status = (

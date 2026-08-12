@@ -464,11 +464,16 @@ def _run_step(results: list, audit_id: str, description: str, fn) -> None:
     step_start = time.monotonic()
     try:
         result = fn()
-    except Exception as exc:
+    except Exception:
+        import traceback
+
+        # full traceback: an intermittent CRASH must diagnose itself — the
+        # summary detail line shows only the last line (the exception), the
+        # stored stderr keeps the whole stack for verbose/JSON output
         result = AuditResult(
             audit_id=audit_id,
             status=AuditStatus.CRASH,
-            stderr=f"{type(exc).__name__}: {exc}",
+            stderr=traceback.format_exc().strip(),
         )
     result.duration_seconds = round(time.monotonic() - step_start, 1)
     _apply_severity_floor(result, _SEVERITY_FLOOR)

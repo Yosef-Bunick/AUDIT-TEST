@@ -1,10 +1,8 @@
 """deps.py — dependency scanner. Now calls audit_deps.main() directly."""
 
-import io
-import sys
-from contextlib import redirect_stdout
 from pathlib import Path
 
+from audit_code.audit_shared import thread_capture_stdout
 from audit_code.models import (
     AuditResult,
     AuditStatus,
@@ -17,27 +15,23 @@ def run(target_root: Path, req: bool = False) -> AuditResult:
 
     audit_deps.ROOT = target_root.resolve()
 
-    saved_argv = sys.argv[:]
-    buf = io.StringIO()
+    # explicit argv + thread-local capture: deps runs in a background thread
+    # concurrently with the wiring/phd/runtime wrappers — mutating the global
+    # sys.argv/sys.stdout here corrupted THEIR runs intermittently
+    argv = ["audit_deps", "--path", str(target_root)]
+    if not req:
+        argv.append("--print")
     try:
-        sys.argv = [
-            "audit_deps",
-            "--path",
-            str(target_root),
-        ]
-        if not req:
-            sys.argv.append("--print")
+        with thread_capture_stdout() as buf:
+            audit_deps.main(argv)
+    except Exception:
+        import traceback
 
-        with redirect_stdout(buf):
-            audit_deps.main()
-    except Exception as exc:
         return AuditResult(
             audit_id="deps",
             status=AuditStatus.CRASH,
-            stderr=f"audit_deps.main() raised: {exc}",
+            stderr=f"audit_deps.main() raised:\n{traceback.format_exc()}",
         )
-    finally:
-        sys.argv = saved_argv
 
     out = buf.getvalue()
     return AuditResult(

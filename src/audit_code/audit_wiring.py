@@ -130,7 +130,11 @@ import sys
 import warnings
 from pathlib import Path
 
-from audit_code.audit_shared import should_audit
+from audit_code.audit_shared import (
+    iter_py_files,
+    parse_text,
+    read_and_parse,
+)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 # Allow --path override for audit-code wrapper
@@ -235,17 +239,14 @@ def is_test(path: Path) -> bool:
 
 def collect_files():
     prod, test = {}, {}
-    for p in ROOT.rglob("*.py"):
+    for p in iter_py_files(ROOT):
         # the audit suite itself (root-level audit_*.py + runner) is not the engine
         if p.parent == ROOT and (
             p.name.startswith("audit_") or p.name == "run_all_audits.py"
         ):
             continue
-        if not should_audit(p):
-            continue
-        try:
-            txt = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        txt, _tree, _err = read_and_parse(p)
+        if txt is None:
             continue
         (test if is_test(p) else prod)[p] = txt
     return prod, test
@@ -299,12 +300,11 @@ class Refs(ast.NodeVisitor):
 def parse_all(files):
     trees = {}
     for p, txt in files.items():
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                trees[p] = ast.parse(txt, filename=str(p))
-        except SyntaxError as e:
-            print(f"  [warn] cannot parse {p}: {e}")
+        tree, err = parse_text(p, txt)
+        if tree is not None:
+            trees[p] = tree
+        elif err:
+            print(f"  [warn] cannot parse {p}: {err}")
     return trees
 
 
@@ -984,11 +984,12 @@ def key_class(k):
     return "cosmetic"
 
 
-def _dead_json_path() -> str | None:
+def _dead_json_path(argv=None) -> str | None:
     """Return the value of a ``--dead-json FILE`` argument, if present."""
-    for i, a in enumerate(sys.argv):
-        if a == "--dead-json" and i + 1 < len(sys.argv):
-            return sys.argv[i + 1]
+    argv = sys.argv if argv is None else argv
+    for i, a in enumerate(argv):
+        if a == "--dead-json" and i + 1 < len(argv):
+            return argv[i + 1]
     return None
 
 
@@ -1000,13 +1001,13 @@ def _rel(p: Path) -> str:
         return str(p).replace("\\", "/")
 
 
-def _maybe_write_dead_json(dead, test_only) -> None:
+def _maybe_write_dead_json(dead, test_only, argv=None) -> None:
     """Write structured dead / test-only symbols to ``--dead-json FILE``.
 
     Sites are 4-tuples ``(path, qualname, line, kind)``.  Written only when the
     flag is passed, so normal (stdout-parsed) runs are unaffected.
     """
-    out = _dead_json_path()
+    out = _dead_json_path(argv)
     if not out:
         return
     payload = {
@@ -1117,8 +1118,10 @@ def find_dead_modules(prod, prod_trees, test_trees):
     return out
 
 
-def main():
-    strict = "--strict" in sys.argv
+def main(argv=None):
+    # explicit argv so in-process wrappers never touch the global sys.argv
+    argv = sys.argv if argv is None else argv
+    strict = "--strict" in argv
     prod, test = collect_files()
     print(f"scanned: {len(prod)} production files, {len(test)} test files\n")
     trees_prod = parse_all(prod)
@@ -1136,7 +1139,7 @@ def main():
     LAST_FINDINGS = found = []
 
     dead, test_only = classify_defs(defs, refs_prod, refs_test, set(prod))
-    _maybe_write_dead_json(dead, test_only)
+    _maybe_write_dead_json(dead, test_only, argv)
     print("=" * 72)
     print("CHECK 1 - DEAD SYMBOLS (zero references anywhere; HIGH confidence)")
     print("=" * 72)

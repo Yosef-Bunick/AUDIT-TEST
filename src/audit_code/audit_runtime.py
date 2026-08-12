@@ -142,10 +142,9 @@ import collections
 import json
 import re
 import sys
-import warnings
 from pathlib import Path
 
-from audit_code.audit_shared import should_audit
+from audit_code.audit_shared import iter_py_files, parse_text, read_and_parse
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 # Allow --path override for audit-code wrapper
@@ -207,12 +206,11 @@ def is_audit_file(p: Path) -> bool:
 
 def collect():
     prod, test = {}, {}
-    for p in ROOT.rglob("*.py"):
-        if is_audit_file(p) or not should_audit(p):
+    for p in iter_py_files(ROOT):
+        if is_audit_file(p):
             continue
-        try:
-            txt = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        txt, _tree, _err = read_and_parse(p)
+        if txt is None:
             continue
         (test if is_test(p) else prod)[p] = txt
     return prod, test
@@ -858,7 +856,7 @@ def audit_dependencies(trees):
     # Every .py stem in the repo counts as local: the engine uses flat
     # sys.path imports (`import checkpoint`, `import router`) for modules
     # living in subpackages - phd's D3 flags the style; they are not deps.
-    local = {p.stem for p in ROOT.rglob("*.py") if should_audit(p)} | {
+    local = {p.stem for p in iter_py_files(ROOT)} | {
         d.name for d in ROOT.iterdir() if d.is_dir()
     }
     stdlib = getattr(sys, "stdlib_module_names", set())
@@ -892,20 +890,21 @@ def audit_dependencies(trees):
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def main():
-    strict = "--strict" in sys.argv
-    as_json = "--json" in sys.argv
+def main(argv=None):
+    # explicit argv so in-process wrappers never touch the global sys.argv
+    argv = sys.argv if argv is None else argv
+    strict = "--strict" in argv
+    as_json = "--json" in argv
     prod, tests = collect()
     sink = Sink()
     trees = {}
     for p, txt in prod.items():
         sink.register(rel(p), txt)
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                trees[p] = ast.parse(txt, filename=str(p))
-        except SyntaxError as e:
-            print(f"[warn] cannot parse {rel(p)}: {e}")
+        t, err = parse_text(p, txt)
+        if t is not None:
+            trees[p] = t
+        elif err:
+            print(f"[warn] cannot parse {rel(p)}: {err}")
 
     stackless = collections.Counter()  # R8 per-file counts
 

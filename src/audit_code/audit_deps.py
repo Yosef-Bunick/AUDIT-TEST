@@ -404,11 +404,13 @@ def _write_requirements(scanned: dict[str, list[str]], preserved: list[str]):
     (ROOT / ".requirements").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main():  # audit: ok (CLI entry point)
+def main(argv=None):  # audit: ok (CLI entry point)
+    # explicit argv so in-process wrappers never touch the global sys.argv
+    argv = sys.argv if argv is None else argv
     scanned = _collect_imports()
     existing = _read_requirements()
 
-    if "--print" in sys.argv:
+    if "--print" in argv:
         print(f"Python {sys.version_info.major}.{sys.version_info.minor}")
         for pkg in sorted(scanned):
             print(f"  {pkg}")
