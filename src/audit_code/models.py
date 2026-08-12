@@ -65,6 +65,27 @@ class AuditResult:
         return self.status in (AuditStatus.FAIL, AuditStatus.CRASH, AuditStatus.ERROR)
 
 
+def findings_from_tuples(
+    tuples: list, source: str, min_severity: str | None = None
+) -> list[Finding]:
+    """Convert (cid, severity, file, line, msg) tuples exported by the
+    standalone audit scripts into Finding objects, honouring the same
+    severity floor the wrapper applied to the counts."""
+    keep = {"HIGH": ("HIGH",), "MEDIUM": ("HIGH", "MEDIUM")}.get(min_severity or "")
+    return [
+        Finding(
+            rule_id=cid,
+            severity=Severity(sev),
+            message=msg,
+            file=fl,
+            line=ln,
+            source=source,
+        )
+        for cid, sev, fl, ln, msg in tuples
+        if not keep or sev in keep
+    ]
+
+
 # Exit codes
 EXIT_PASS = 0
 EXIT_FAIL = 1

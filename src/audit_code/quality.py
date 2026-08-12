@@ -284,7 +284,7 @@ _RUFF_CHECK_ARGS = [
 ]
 
 
-def _q2_record(raw, findings, counts, out, *, verbose_parse_fail):
+def _q2_record(raw, findings, counts, out, *, verbose_parse_fail, root=None):
     """Parse ruff JSON output and record findings; returns (security, lint)."""
     try:
         ruff_findings = json.loads(raw[raw.index("[") : raw.rindex("]") + 1])
@@ -299,12 +299,19 @@ def _q2_record(raw, findings, counts, out, *, verbose_parse_fail):
     counts["MEDIUM"] += len(lint)
     for sev, items in ((Severity.HIGH, sec), (Severity.MEDIUM, lint)):
         for f in items:
+            fname = f.get("filename")
+            if fname and root:
+                try:
+                    fname = str(Path(fname).relative_to(root))
+                except ValueError:
+                    pass
             findings.append(
                 Finding(
                     rule_id="Q2",
                     severity=sev,
                     message=f"{f.get('code')}: {f.get('message', '')}",
-                    file=f.get("filename"),
+                    file=fname,
+                    line=(f.get("location") or {}).get("row"),
                     source="quality",
                 )
             )
@@ -337,7 +344,9 @@ def _q2_ruff(target_root, root, fix, findings, counts, out):
             + ["--output-format", "json", "--exit-zero"],
             root,
         )
-        sec, lint = _q2_record(res2, findings, counts, out, verbose_parse_fail=False)
+        sec, lint = _q2_record(
+            res2, findings, counts, out, verbose_parse_fail=False, root=root
+        )
         out.append(f"  remaining — security (S*): {len(sec)}   lint/style: {len(lint)}")
         out.append("")
         return
@@ -345,7 +354,9 @@ def _q2_ruff(target_root, root, fix, findings, counts, out):
         tool.split() + _RUFF_CHECK_ARGS + ["--output-format", "json", "--exit-zero"],
         root,
     )
-    sec, lint = _q2_record(res, findings, counts, out, verbose_parse_fail=True)
+    sec, lint = _q2_record(
+        res, findings, counts, out, verbose_parse_fail=True, root=root
+    )
     out.append(f"  security (S*): {len(sec)}   lint/style: {len(lint)}")
     out.append("")
 
@@ -384,11 +395,15 @@ def _q3_mypy(target_root, root, strict_mypy, findings, counts, out):
             out.append(f"  {len(errs)} error(s) (first 10):")
             for line in errs[:10]:
                 out.append(f"    {line[:120]}")
+                # mypy line shape: path:line: error: message
+                loc = re.match(r"(.+?):(\d+):", line)
                 findings.append(
                     Finding(
                         rule_id="Q3",
                         severity=Severity.MEDIUM,
                         message=line[:200],
+                        file=loc.group(1) if loc else None,
+                        line=int(loc.group(2)) if loc else None,
                         source="quality",
                     )
                 )

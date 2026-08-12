@@ -185,6 +185,10 @@ TRACEBACK_MARKS = {
 }
 SUPPRESS_RE = re.compile(r"#\s*audit:\s*ok")
 
+# (cid, severity, file, line, msg) tuples from the last main() run — read by
+# the runtime.py wrapper to build structured Finding objects for JSON/SARIF.
+LAST_FINDINGS: list = []
+
 
 def is_test(p: Path) -> bool:
     s = str(p).replace("\\", "/")
@@ -1195,6 +1199,15 @@ def main():
         ("R12i", "INFO", "prompt-promised JSON keys nothing reads (rotting contract)"),
         ("R10o", "INFO", "orphan prompts (on disk / registered, never used)"),
         ("R1i", "INFO", "async forever-loops (cancellable; verify cancel path)"),
+    ]
+
+    # Export structured findings for in-process callers (runtime.py wrapper →
+    # --json/--sarif reports). Zero cost: the tuples already exist in the sink.
+    global LAST_FINDINGS
+    LAST_FINDINGS = [
+        (cid, sev, fl, ln, msg)
+        for cid, sev, _ in SECTIONS
+        for fl, ln, msg in sink.data.get(cid, ())
     ]
 
     if as_json:

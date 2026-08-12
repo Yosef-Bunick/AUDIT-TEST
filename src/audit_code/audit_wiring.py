@@ -146,6 +146,10 @@ NAME_SKIP = {"main", "cli", "run", "wrapper", "inner", "decorator"}
 # Inline suppression: put  # audit: ok  on the flagged line (same convention
 # as audit_phd.py / audit_runtime.py).
 SUPPRESS_RE = re.compile(r"#\s*audit:\s*ok")
+
+# (cid, severity, file, line, msg) tuples from the last main() run — read by
+# the wiring.py wrapper to build structured Finding objects for JSON/SARIF.
+LAST_FINDINGS: list = []
 _line_cache: dict[Path, list[str]] = {}
 _SUPPRESS_SCAN_WINDOW = 25
 
@@ -1128,6 +1132,8 @@ def main():
     high_findings = 0
     medium_findings = 0
     suppressed = 0
+    global LAST_FINDINGS
+    LAST_FINDINGS = found = []
 
     dead, test_only = classify_defs(defs, refs_prod, refs_test, set(prod))
     _maybe_write_dead_json(dead, test_only)
@@ -1142,6 +1148,15 @@ def main():
                 continue
             tag = " [shared-name]" if amb else ""
             print(f"  {kind:8} {qual:42} {p.relative_to(ROOT)}:{line}{tag}")
+            found.append(
+                (
+                    "W1",
+                    "HIGH",
+                    str(p.relative_to(ROOT)),
+                    line,
+                    f"dead {kind} {qual} — zero references anywhere{tag}",
+                )
+            )
             high_findings += 1
             check1_any = True
     if not check1_any:
@@ -1160,6 +1175,15 @@ def main():
             tag = " [shared-name]" if amb else ""
             print(f"  {kind:8} {qual:42} {p.relative_to(ROOT)}:{line}{tag}")
             print(f"           tested by: {', '.join(tfiles)}")
+            found.append(
+                (
+                    "W2",
+                    "HIGH",
+                    str(p.relative_to(ROOT)),
+                    line,
+                    f"test-only {kind} {qual} — built+tested, never wired{tag}",
+                )
+            )
             high_findings += 1
             check2_any = True
     if not check2_any:
@@ -1175,6 +1199,9 @@ def main():
             groups = collections.defaultdict(list)
             for k in dead_keys:
                 groups[key_class(k)].append(k)
+                found.append(
+                    ("W3", "HIGH", str(cf), None, f"dead config key {k} — no reader")
+                )
                 high_findings += 1
             print(f"\n  {cf}: {len(dead_keys)} dead keys")
             if groups.get("SAFETY"):
@@ -1216,6 +1243,15 @@ def main():
     pairs = audit_pairs(defs, refs_prod, set(prod))
     for f, deadside, liveside in sorted(set(pairs)):
         print(f"  {f}: {liveside} is wired but {deadside} has no production caller")
+        found.append(
+            (
+                "W5",
+                "HIGH",
+                f,
+                None,
+                f"{liveside} is wired but {deadside} has no production caller",
+            )
+        )
         high_findings += 1
     if not pairs:
         print("  none")
@@ -1239,6 +1275,9 @@ def main():
     shadows = audit_shadowed_config(dead_keys_all, prod)
     for key, nm, val, f, line in sorted(shadows):
         print(f"  {key:38} shadowed by {nm} = {val}  ({f}:{line})")
+        found.append(
+            ("W7", "HIGH", f, line, f"config key {key} shadowed by {nm} = {val}")
+        )
         high_findings += 1
     if not shadows:
         print("  none")
@@ -1255,6 +1294,15 @@ def main():
     for cf, key, where in sorted(transitive):
         print(f"  {cf}: {key}")
         print(f"      read only inside unwired code: {where}")
+        found.append(
+            (
+                "W8",
+                "HIGH",
+                str(cf),
+                None,
+                f"config key {key} read only inside unwired code: {where}",
+            )
+        )
         high_findings += 1
     if not transitive:
         print("  none")
@@ -1266,6 +1314,7 @@ def main():
     stdout_findings, n_reach = audit_stdout_purity(trees_prod)
     for f, line, msg in sorted(stdout_findings):
         print(f"  {f}:{line}  {msg}")
+        found.append(("W9", "HIGH", f, line, msg))
         high_findings += 1
     if not stdout_findings:
         print(f"  none ({n_reach} agent-process modules verified clean)")
@@ -1282,6 +1331,15 @@ def main():
     dead_modules = find_dead_modules(prod, trees_prod, trees_test)
     for p, label in dead_modules:
         print(f"  [{label:9}] {_module_dotted(p):40} {p.relative_to(ROOT)}")
+        found.append(
+            (
+                "W10",
+                "MEDIUM",
+                str(p.relative_to(ROOT)),
+                None,
+                f"{label} module {_module_dotted(p)} — no production importer",
+            )
+        )
         medium_findings += 1
     if not dead_modules:
         print("  none")

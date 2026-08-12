@@ -19,6 +19,7 @@ from audit_code.audit_shared import utf8_subprocess_env
 from audit_code.models import (
     AuditResult,
     AuditStatus,
+    findings_from_tuples,
 )
 
 _SCRIPT = Path(__file__).resolve().parent / "audit_wiring.py"
@@ -91,6 +92,7 @@ def run(target_root: Path, strict: bool = True) -> AuditResult:
     return AuditResult(
         audit_id="wiring",
         status=status,
+        findings=findings_from_tuples(audit_wiring.LAST_FINDINGS, "wiring"),
         high=high,
         medium=med,
         info=info,

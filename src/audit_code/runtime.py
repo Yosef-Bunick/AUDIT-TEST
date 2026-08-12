@@ -13,6 +13,7 @@ from pathlib import Path
 from audit_code.models import (
     AuditResult,
     AuditStatus,
+    findings_from_tuples,
 )
 
 SUMMARY_RE = re.compile(r"SUMMARY\s+HIGH:\s*(\d+)\s+MEDIUM:\s*(\d+)\s+INFO:\s*(\d+)")
@@ -66,6 +67,7 @@ def run(target_root: Path, strict: bool = True) -> AuditResult:
     return AuditResult(
         audit_id="runtime",
         status=status,
+        findings=findings_from_tuples(audit_runtime.LAST_FINDINGS, "runtime"),
         high=high,
         medium=med,
         info=info,

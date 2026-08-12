@@ -184,6 +184,7 @@ def _s1_failures(
                 rule_id="S1",
                 severity=Severity.HIGH,
                 message=f"{kind}: {nodeid}",
+                file=nodeid.split("::", 1)[0] or None,
                 source="suite",
             )
         )

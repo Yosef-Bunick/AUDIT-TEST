@@ -38,6 +38,35 @@ def test_runtime_wrapper_runs_and_parses(tmp_path):
     assert r.audit_id == "runtime"
 
 
+def test_phd_wrapper_exports_structured_findings(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "def f():\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except Exception:\n"
+        "        pass\n\n\n"
+        "f()\n",
+        encoding="utf-8",
+    )
+    r = phd.run(tmp_path)
+    assert r.high >= 1
+    c2 = [f for f in r.findings if f.rule_id == "C2"]
+    assert c2, "swallowed-exception finding should be structured, not stdout-only"
+    assert c2[0].file == "app.py" and c2[0].line == 4
+    assert len(r.findings) == r.high + r.medium + r.info
+
+
+def test_wiring_wrapper_exports_structured_findings(tmp_path):
+    (tmp_path / "app.py").write_text(
+        'def dead_helper():\n    """Doc."""\n    return 1\n', encoding="utf-8"
+    )
+    r = wiring.run(tmp_path)
+    w1 = [f for f in r.findings if f.rule_id == "W1"]
+    assert w1, "dead symbol should be a structured finding"
+    assert w1[0].file == "app.py" and w1[0].line == 1
+    assert len([f for f in r.findings if f.severity.value == "HIGH"]) == r.high
+
+
 def test_suite_wrapper_runs_pytest(tmp_path):
     _clean_project(tmp_path)
     tests = tmp_path / "tests"

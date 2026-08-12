@@ -230,6 +230,10 @@ GUARD_EXC = {
 
 SUPPRESS_RE = re.compile(r"#\s*audit:\s*ok")
 
+# (cid, severity, file, line, msg) tuples from the last main() run — read by
+# the phd.py wrapper to build structured Finding objects for JSON/SARIF.
+LAST_FINDINGS: list = []
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # collection / annotation
@@ -2153,6 +2157,15 @@ def main():
         ("B3", "INFO", "daemon threads (need cooperative cancellation)"),
         ("P2", "INFO", "imports inside functions (anti-circular idiom; counts)"),
         ("P3", "INFO", "re.compile() inside functions (Phase 4)"),
+    ]
+
+    # Export structured findings for in-process callers (phd.py wrapper →
+    # --json/--sarif reports). Zero cost: the tuples already exist in the sink.
+    global LAST_FINDINGS
+    LAST_FINDINGS = [
+        (cid, sev, fl, ln, msg)
+        for cid, sev, _ in SECTIONS
+        for fl, ln, msg in sink.data.get(cid, ())
     ]
 
     if as_json:
