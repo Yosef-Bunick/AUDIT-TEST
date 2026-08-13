@@ -22,9 +22,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
-from audit_code.audit_shared import force_utf8_streams, should_audit
+from audit_code.audit_shared import force_utf8_streams, read_and_parse, should_audit
 from audit_code.config import (
     DOC_THRESHOLD_PCT,
     MIN_FLAG_BODY_LINES,
@@ -126,9 +127,9 @@ def _py_files(root: Path, tests_dir: Path) -> tuple[list[Path], list[Path]]:
 
 def _def_spans(path: Path) -> list[tuple[str, int, int, int]]:
     """(qualname, def_line, body_start, body_end) for every function."""
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    except SyntaxError:
+    # warm shared cache: wiring/phd/runtime already parsed this file in-process
+    _txt, tree, _err = read_and_parse(path)
+    if tree is None:
         return []
     out = []
 
@@ -211,8 +212,13 @@ def _q0_syntax(root, prod, test_files, findings, counts, out):
     """Q0: every .py file must parse."""
     bad = []
     for p in prod + test_files:
+        # warm shared cache first; re-parse only broken files to recover the
+        # structured SyntaxError (lineno/msg) for the finding message
+        txt, tree, err = read_and_parse(p)
+        if txt is None or tree is not None:
+            continue
         try:
-            ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+            ast.parse(txt)
         except SyntaxError as e:
             bad.append(f"{p.relative_to(root)}:{e.lineno}  {e.msg}")
     out.append("=" * 74)
@@ -508,13 +514,21 @@ def _q4_cves(target_root, root, findings, counts, out):
 
     pip_audit = _tool("pip-audit", target_root)
     if pip_audit:
-        rc, res = _run(
-            pip_audit.split() + ["--progress-spinner", "off", "-f", "json"],
-            root,
-            timeout=300,
-        )
+        cache_key = _q4_cache_key(pip_audit)
+        res = _q4_cache_load(cache_key)
+        if res is not None:
+            rc = 1  # cached runs are stored only when they parsed as JSON
+            out.append("  reusing cached pip-audit result (<24h, same env; ")
+            out.append("  set AUDIT_NO_Q4_CACHE=1 to force a fresh scan)")
+        else:
+            rc, res = _run(
+                pip_audit.split() + ["--progress-spinner", "off", "-f", "json"],
+                root,
+                timeout=300,
+            )
         vulnerable = _q4_parse_pip_audit(res)
         if vulnerable is not None and rc not in (-1, -2):
+            _q4_cache_store(cache_key, res)
             if project_scope:
                 skipped = [v for v in vulnerable if v[0] not in declared]
                 vulnerable = [v for v in vulnerable if v[0] in declared]
@@ -577,6 +591,53 @@ def _q4_cves(target_root, root, findings, counts, out):
     if not cve_found:
         out.append("  SKIP: neither pip-audit nor safety installed")
     out.append("")
+
+
+_Q4_CACHE_TTL_SECONDS = 24 * 3600  # CVE feeds update daily
+
+
+def _q4_cache_key(tool_cmd: str) -> str:
+    """Fingerprint of the audited environment + the exact tool that scans it.
+
+    Keyed on installed name==version pairs (a changed env must miss) AND the
+    resolved pip-audit command (a which()-found pip-audit may audit a
+    different venv than this interpreter — never share cache across tools).
+    """
+    import importlib.metadata
+
+    dists = sorted(
+        f"{d.metadata['Name']}=={d.version}"
+        for d in importlib.metadata.distributions()
+        if d.metadata["Name"]
+    )
+    h = hashlib.sha256()
+    h.update(b"q4-cache-v1\0")
+    h.update(tool_cmd.encode("utf-8") + b"\0")
+    h.update("\n".join(dists).encode("utf-8"))
+    return h.hexdigest()[:32]
+
+
+def _q4_cache_load(key: str) -> str | None:
+    """Return the cached pip-audit JSON if fresh (<TTL) and same-env."""
+    if os.environ.get("AUDIT_NO_Q4_CACHE"):
+        return None
+    f = Path(tempfile.gettempdir()) / "audit_q4_cache" / f"{key}.json"
+    try:
+        if f.exists() and (time.time() - f.stat().st_mtime) < _Q4_CACHE_TTL_SECONDS:
+            return f.read_text(encoding="utf-8")
+    except OSError:
+        pass
+    return None
+
+
+def _q4_cache_store(key: str, res: str) -> None:
+    """Store a successful (JSON-parseable) pip-audit result for reuse."""
+    cache = Path(tempfile.gettempdir()) / "audit_q4_cache"
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / f"{key}.json").write_text(res, encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _q4_parse_pip_audit(res: str) -> list[tuple[str, str, list[str]]] | None:
@@ -763,9 +824,8 @@ def _q6_docstrings(root, prod, findings, counts, out):
     have = need = 0
     worst: dict = {}
     for p in prod:
-        try:
-            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
-        except SyntaxError:
+        _txt, tree, _err = read_and_parse(p)
+        if tree is None:
             continue
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -871,106 +931,115 @@ def _q8_mutation(target_root, root, mutation, counts, out):
     out.append("")
 
 
-def run(
+def run_tools(
     target_root: Path,
     fast: bool = False,
     strict_mypy: bool = False,
-    mutation: bool = False,
-    strict: bool = True,
     tests: str = "tests",
-    pytest_extra: str = "-p no:logfire",
-    fix: bool = False,
-    shared_cov: Path | None = None,
-) -> AuditResult:
-    """Run quality audit against a target project.
+) -> dict:
+    """Coverage-free phase of the quality audit: Q0 + the Q1-Q4 tool pool +
+    Q6/Q7/Q9. None of these need the test suite's coverage data, so the
+    runner can execute this while the background suite is still running and
+    keep only Q5/Q8 (see :func:`finish`) for the post-suite tail.
 
-    shared_cov: coverage data file already produced by the suite audit's run.
-    When present and non-empty, Q5 reuses it instead of running the whole test
-    suite a second time under coverage."""
-    findings: list[Finding] = []
-    stdout_lines: list[str] = []
-
-    # --fix mode: format + lint-fix only, skip coverage/mypy/CVE/etc
-    if fix:
-        fast = True
-
+    Returns the partial state :func:`finish` consumes. Output/finding order
+    is preserved exactly: Q6/Q7/Q9 go to a separate tail buffer that finish()
+    splices AFTER Q5/Q8, matching the historical single-pass layout.
+    """
     force_utf8_streams()
 
     root = target_root.resolve()
     tests_dir = (root / tests).resolve()
     counts = {"HIGH": 0, "MEDIUM": 0, "INFO": 0}
     prod, test_files = _py_files(root, tests_dir)
-    stdout_lines.append(
-        f"scanned root: {root} ({len(prod)} prod files, {len(test_files)} test files)"
-    )
-    stdout_lines.append("")
+    pre_out: list[str] = [
+        f"scanned root: {root} ({len(prod)} prod files, {len(test_files)} test files)",
+        "",
+    ]
+    pre_findings: list[Finding] = []
 
-    if fix:
-        # `f` = fix FIRST, verify after. Black runs immediately, then
-        # ruff --fix (that order — format, then lint-fix); ruff's fix
-        # branch re-checks for unfixable leftovers, and Q0 then proves
-        # every file still parses. The analysis gates (Q3-Q9) never run
-        # in fix mode — fixing is not auditing.
-        _q1_black(target_root, root, True, findings, counts, stdout_lines)
-        _q2_ruff(target_root, root, True, findings, counts, stdout_lines)
-    else:
-        _q0_syntax(root, prod, test_files, findings, counts, stdout_lines)
+    _q0_syntax(root, prod, test_files, pre_findings, counts, pre_out)
 
-        # Run independent external tools in parallel (black, ruff, mypy, CVE).
-        # Each tool writes to its own isolated buffer to avoid jumbled output.
-        # Merged in deterministic order after all complete.
-        from concurrent.futures import ThreadPoolExecutor
+    # Run independent external tools in parallel (black, ruff, mypy, CVE).
+    # Each tool writes to its own isolated buffer to avoid jumbled output.
+    # Merged in deterministic order after all complete.
+    from concurrent.futures import ThreadPoolExecutor
 
-        def _run_tool(fn, *args):
-            """Run a Q-function with isolated output buffers."""
-            local_findings = []
-            local_counts = {"HIGH": 0, "MEDIUM": 0, "INFO": 0}
-            local_out = []
-            fn(*args, local_findings, local_counts, local_out)
-            return local_findings, local_counts, local_out
+    def _run_tool(fn, *args):
+        """Run a Q-function with isolated output buffers."""
+        local_findings = []
+        local_counts = {"HIGH": 0, "MEDIUM": 0, "INFO": 0}
+        local_out = []
+        fn(*args, local_findings, local_counts, local_out)
+        return local_findings, local_counts, local_out
 
-        tool_jobs = [
-            (_q1_black, target_root, root, fix),
-            (_q2_ruff, target_root, root, fix),
-        ]
-        if not fast:
-            tool_jobs.extend(
-                [
-                    (_q3_mypy, target_root, root, strict_mypy),
-                    (_q4_cves, target_root, root),
-                ]
-            )
-
-        # Submit all, collect results, merge in submission order
-        with ThreadPoolExecutor(max_workers=len(tool_jobs)) as ex:
-            job_futures = [
-                (fn, ex.submit(_run_tool, fn, *args)) for fn, *args in tool_jobs
+    tool_jobs = [
+        (_q1_black, target_root, root, False),
+        (_q2_ruff, target_root, root, False),
+    ]
+    if not fast:
+        tool_jobs.extend(
+            [
+                (_q3_mypy, target_root, root, strict_mypy),
+                (_q4_cves, target_root, root),
             ]
-            for fn, fut in job_futures:
-                loc_find, loc_cnt, loc_out = fut.result()
-                findings.extend(loc_find)
-                for k in counts:
-                    counts[k] += loc_cnt[k]
-                stdout_lines.extend(loc_out)
+        )
 
-        if not fast:
-            _q5_never_executed(
-                root,
-                tests_dir,
-                fast,
-                pytest_extra,
-                shared_cov,
-                findings,
-                counts,
-                stdout_lines,
-            )
-            _q8_mutation(target_root, root, mutation, counts, stdout_lines)
+    # Submit all, collect results, merge in submission order
+    with ThreadPoolExecutor(max_workers=len(tool_jobs)) as ex:
+        job_futures = [(fn, ex.submit(_run_tool, fn, *args)) for fn, *args in tool_jobs]
+        for fn, fut in job_futures:
+            loc_find, loc_cnt, loc_out = fut.result()
+            pre_findings.extend(loc_find)
+            for k in counts:
+                counts[k] += loc_cnt[k]
+            pre_out.extend(loc_out)
 
-        _q6_docstrings(root, prod, findings, counts, stdout_lines)
-        _q7_test_hygiene(root, tests_dir, findings, counts, stdout_lines)
+    tail_out: list[str] = []
+    tail_findings: list[Finding] = []
+    _q6_docstrings(root, prod, tail_findings, counts, tail_out)
+    _q7_test_hygiene(root, tests_dir, tail_findings, counts, tail_out)
+    _q9_scalene(target_root, root, tail_findings, counts, tail_out)
 
-        _q9_scalene(target_root, root, findings, counts, stdout_lines)
-    # Summary
+    return {
+        "target_root": target_root,
+        "root": root,
+        "tests_dir": tests_dir,
+        "fast": fast,
+        "counts": counts,
+        "pre_out": pre_out,
+        "pre_findings": pre_findings,
+        "tail_out": tail_out,
+        "tail_findings": tail_findings,
+    }
+
+
+def finish(
+    partial: dict,
+    mutation: bool = False,
+    pytest_extra: str = "-p no:logfire",
+    shared_cov: Path | None = None,
+) -> AuditResult:
+    """Post-suite phase: Q5 (needs coverage) + Q8, then summary/verdict."""
+    counts = partial["counts"]
+    mid_out: list[str] = []
+    mid_findings: list[Finding] = []
+    if not partial["fast"]:
+        _q5_never_executed(
+            partial["root"],
+            partial["tests_dir"],
+            partial["fast"],
+            pytest_extra,
+            shared_cov,
+            mid_findings,
+            counts,
+            mid_out,
+        )
+        _q8_mutation(partial["target_root"], partial["root"], mutation, counts, mid_out)
+
+    stdout_lines = partial["pre_out"] + mid_out + partial["tail_out"]
+    findings = partial["pre_findings"] + mid_findings + partial["tail_findings"]
+
     stdout_lines.append("=" * 74)
     stdout_lines.append(
         f"SUMMARY  HIGH: {counts['HIGH']}   MEDIUM: {counts['MEDIUM']}   "
@@ -996,6 +1065,73 @@ def run(
         info=counts["INFO"],
         stdout="\n".join(stdout_lines),
         completed=True,
+    )
+
+
+def run(
+    target_root: Path,
+    fast: bool = False,
+    strict_mypy: bool = False,
+    mutation: bool = False,
+    strict: bool = True,
+    tests: str = "tests",
+    pytest_extra: str = "-p no:logfire",
+    fix: bool = False,
+    shared_cov: Path | None = None,
+) -> AuditResult:
+    """Run quality audit against a target project.
+
+    shared_cov: coverage data file already produced by the suite audit's run.
+    When present and non-empty, Q5 reuses it instead of running the whole test
+    suite a second time under coverage."""
+    if fix:
+        # `f` = fix FIRST, verify after. Black runs immediately, then
+        # ruff --fix (that order — format, then lint-fix); ruff's fix
+        # branch re-checks for unfixable leftovers, and Q0 then proves
+        # every file still parses. The analysis gates (Q3-Q9) never run
+        # in fix mode — fixing is not auditing.
+        findings: list[Finding] = []
+        stdout_lines: list[str] = []
+        force_utf8_streams()
+        root = target_root.resolve()
+        tests_dir = (root / tests).resolve()
+        counts = {"HIGH": 0, "MEDIUM": 0, "INFO": 0}
+        prod, test_files = _py_files(root, tests_dir)
+        stdout_lines.append(
+            f"scanned root: {root} "
+            f"({len(prod)} prod files, {len(test_files)} test files)"
+        )
+        stdout_lines.append("")
+        _q1_black(target_root, root, True, findings, counts, stdout_lines)
+        _q2_ruff(target_root, root, True, findings, counts, stdout_lines)
+        stdout_lines.append("=" * 74)
+        stdout_lines.append(
+            f"SUMMARY  HIGH: {counts['HIGH']}   MEDIUM: {counts['MEDIUM']}   "
+            f"INFO: {counts['INFO']}   suppressed: 0"
+        )
+        status = (
+            AuditStatus.FAIL
+            if counts["HIGH"]
+            else (
+                AuditStatus.WARN
+                if (counts["MEDIUM"] or counts["INFO"])
+                else AuditStatus.PASS
+            )
+        )
+        return AuditResult(
+            audit_id="quality",
+            status=status,
+            findings=findings,
+            high=counts["HIGH"],
+            medium=counts["MEDIUM"],
+            info=counts["INFO"],
+            stdout="\n".join(stdout_lines),
+            completed=True,
+        )
+
+    partial = run_tools(target_root, fast=fast, strict_mypy=strict_mypy, tests=tests)
+    return finish(
+        partial, mutation=mutation, pytest_extra=pytest_extra, shared_cov=shared_cov
     )
 
 

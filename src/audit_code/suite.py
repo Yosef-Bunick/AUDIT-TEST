@@ -40,11 +40,20 @@ ENV_SKIP_RE = re.compile(
 
 
 def _run_pytest(
-    target: str, cwd: Path, timeout: int, cov_file: Path | None = None
+    target: str,
+    cwd: Path,
+    timeout: int,
+    cov_file: Path | None = None,
+    xdist: bool = True,
 ) -> tuple[str, int]:
     """Run pytest. When cov_file is given, run under coverage and write the
     data there — so the quality audit can reuse this one run for its Q5
-    execution-proof instead of running the whole suite a second time."""
+    execution-proof instead of running the whole suite a second time.
+
+    xdist=False skips `-n auto`: a solo one-test re-run gains nothing from
+    N workers but pays their full startup (~17s of pure waste per re-run on
+    a 20-core box — measured; with up to MAX_SOLO_RERUNS re-runs this was
+    the single largest cost of a full audit on a failing suite)."""
     if cov_file is not None:
         cmd = [
             sys.executable,
@@ -60,13 +69,14 @@ def _run_pytest(
         env = dict(os.environ, COVERAGE_FILE=str(cov_file))
     else:
         xdist_args = []
-        try:
-            import importlib.util
+        if xdist:
+            try:
+                import importlib.util
 
-            if importlib.util.find_spec("xdist") is not None:
-                xdist_args = ["-n", "auto"]
-        except (ImportError, ValueError):
-            pass
+                if importlib.util.find_spec("xdist") is not None:
+                    xdist_args = ["-n", "auto"]
+            except (ImportError, ValueError):
+                pass
         cmd = [sys.executable, "-m", "pytest", target, *PYTEST_ARGS, *xdist_args]
         env = None
     proc = subprocess.run(
@@ -107,7 +117,7 @@ def _parse(output: str, returncode: int) -> dict:
 
 def _classify_solo(target_root: Path, nodeid: str) -> str:
     try:
-        out, rc = _run_pytest(nodeid, target_root, SOLO_TIMEOUT)
+        out, rc = _run_pytest(nodeid, target_root, SOLO_TIMEOUT, xdist=False)
     except subprocess.TimeoutExpired:
         return "hang (timed out solo)"
     if rc == 0:

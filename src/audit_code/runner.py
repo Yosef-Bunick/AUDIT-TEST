@@ -141,6 +141,78 @@ def run_suite(
                 "  [suite           ] running test suite in background...", flush=True
             )
 
+    # Python deep-audit module list + background submissions — computed and
+    # submitted EARLY so the subprocess-bound modules (semgrep is the long
+    # pole) and quality's coverage-free phase start at t~0 instead of after
+    # the serialized encoding/syntax/polyglot chain (~16s on a large repo).
+    # Gated on `not fix`: in fix mode black/ruff mutate files and must not
+    # race the syntax/polyglot reads — fix keeps the late submission below.
+    BG_MODULES = {"lint", "black", "semgrep", "bandit", "deps"}
+    audit_modules: list[tuple[str, str]] = []
+    bg_futures: list = []
+    bg_executor = None
+    quality_tools_future = None
+    if python_detected:
+        all_audits = [
+            ("wiring", "Is it connected?"),
+            ("phd", "Does it meet the bar?"),
+            ("runtime", "Will it hang or crash?"),
+            ("suite", "Is the test suite healthy?"),
+            ("quality", "External gates + execution proof"),
+            ("lint", "ruff lint"),
+            ("black", "black format"),
+            ("semgrep", "semgrep security scan"),
+            ("bandit", "bandit security scan"),
+            ("deps", "Dependency scanner"),
+        ]
+        fast_audits = [
+            ("wiring", "Is it connected?"),
+            ("phd", "Does it meet the bar?"),
+            ("quality", "External gates (fast checks only)"),
+            ("deps", "Dependency scanner"),
+        ]
+        if modules is not None:
+            # User picked specific modules — run exactly those
+            audit_modules = [(n, d) for n, d in all_audits if n in modules]
+        elif mode == "min":
+            audit_modules = fast_audits
+        else:
+            audit_modules = all_audits
+        if fix:
+            # Honest banner: in fix mode quality is black+ruff --fix, not audits
+            audit_modules = [
+                (n, "black + ruff --fix, then verify" if n == "quality" else d)
+                for n, d in audit_modules
+            ]
+        else:
+            bg_executor = ThreadPoolExecutor(max_workers=len(BG_MODULES) + 1)
+            for mn, _desc in audit_modules:
+                if mn in BG_MODULES:
+                    bg_futures.append(
+                        (
+                            mn,
+                            bg_executor.submit(
+                                _run_one_module,
+                                target_root,
+                                mn,
+                                mode,
+                                fix,
+                                severity,
+                                fast,
+                                shared_cov,
+                                req=req,
+                            ),
+                        )
+                    )
+            if any(mn == "quality" for mn, _d in audit_modules):
+                # coverage-free half of quality (Q0-Q4, Q6/Q7/Q9) runs now;
+                # only Q5/Q8 (quality.finish) must wait for the suite
+                quality_tools_future = bg_executor.submit(
+                    quality.run_tools,
+                    target_root,
+                    fast=(mode == "min" or fast),
+                )
+
     # 0. Universal source-encoding check (language-agnostic; honours the target's
     #    #encoding, default utf-8). Runs on default/full; skipped in `min` and
     #    when a narrower module set that omits it is requested.
@@ -241,67 +313,32 @@ def run_suite(
                 ),
             )
 
-    # 3. Python deep audits
-    python_detected = any(a.language == "python" for a in adapters)
-    if python_detected:
-        all_audits = [
-            ("wiring", "Is it connected?"),
-            ("phd", "Does it meet the bar?"),
-            ("runtime", "Will it hang or crash?"),
-            ("suite", "Is the test suite healthy?"),
-            ("quality", "External gates + execution proof"),
-            ("lint", "ruff lint"),
-            ("black", "black format"),
-            ("semgrep", "semgrep security scan"),
-            ("bandit", "bandit security scan"),
-            ("deps", "Dependency scanner"),
-        ]
-        fast_audits = [
-            ("wiring", "Is it connected?"),
-            ("phd", "Does it meet the bar?"),
-            ("quality", "External gates (fast checks only)"),
-            ("deps", "Dependency scanner"),
-        ]
-
-        if modules is not None:
-            # User picked specific modules — run exactly those
-            audit_modules = [(n, d) for n, d in all_audits if n in modules]
-        elif mode == "min":
-            audit_modules = fast_audits
-        else:
-            audit_modules = all_audits
-
-        if fix:
-            # Honest banner: in fix mode quality is black+ruff --fix, not audits
-            audit_modules = [
-                (n, "black + ruff --fix, then verify" if n == "quality" else d)
-                for n, d in audit_modules
-            ]
-
+    # 3. Python deep audits (module list + background submissions were
+    #    computed/hoisted above, before the serialized syntax/polyglot chain)
+    if python_detected and audit_modules:
         try:
-            # Start subprocess-bound audits in background alongside the
-            # CPU-bound wiring/phd/runtime/quality chain.
-            BG_MODULES = {"lint", "black", "semgrep", "bandit", "deps"}
-            bg_futures = []  # (module_name, future)
-            bg_executor = ThreadPoolExecutor(max_workers=len(BG_MODULES))
-            for mn, desc in audit_modules:
-                if mn in BG_MODULES:
-                    bg_futures.append(
-                        (
-                            mn,
-                            bg_executor.submit(
-                                _run_one_module,
-                                target_root,
+            if fix and bg_executor is None:
+                # fix mode: submit BG modules only now — black/ruff mutate
+                # files and must not race the earlier read-only sections
+                bg_executor = ThreadPoolExecutor(max_workers=len(BG_MODULES))
+                for mn, _desc in audit_modules:
+                    if mn in BG_MODULES:
+                        bg_futures.append(
+                            (
                                 mn,
-                                mode,
-                                fix,
-                                severity,
-                                fast,
-                                shared_cov,
-                                req=req,
-                            ),
+                                bg_executor.submit(
+                                    _run_one_module,
+                                    target_root,
+                                    mn,
+                                    mode,
+                                    fix,
+                                    severity,
+                                    fast,
+                                    shared_cov,
+                                    req=req,
+                                ),
+                            )
                         )
-                    )
 
             for module_name, description in audit_modules:
                 if module_name == "suite" and suite_bg is not None:
@@ -323,11 +360,13 @@ def run_suite(
             for mn, fut in bg_futures:
                 r = fut.result()
                 r.duration_seconds = 0
+                _apply_severity_floor(r, severity)
                 results.append(r)
                 sc = _status_char(r.status)
                 dl = _detail_line(r)
                 print(f"  [{sc}] {mn:16} {dl}")
-            bg_executor.shutdown(wait=False)
+            if bg_executor is not None:
+                bg_executor.shutdown(wait=False)
 
             # `quality` runs last: Q5 needs the background suite's coverage
             # run, which by now has had the whole rest of the audit to
@@ -351,21 +390,33 @@ def run_suite(
                     print(f"  [{sc}] {'suite':16} {_detail_line(suite_result)}")
                     suite_bg.shutdown(wait=False)
                     suite_bg = None  # collected — skip the later pickup below
-                _run_step(
-                    results,
-                    "quality",
-                    quality_entry[1],
-                    lambda: _run_one_module(
-                        target_root,
+                if quality_tools_future is not None:
+                    # tools half already ran in the background — only the
+                    # coverage-dependent tail (Q5/Q8 + verdict) runs here
+                    _run_step(
+                        results,
                         "quality",
-                        mode,
-                        fix,
-                        severity,
-                        fast,
-                        shared_cov,
-                        req=req,
-                    ),
-                )
+                        quality_entry[1],
+                        lambda: quality.finish(
+                            quality_tools_future.result(), shared_cov=shared_cov
+                        ),
+                    )
+                else:
+                    _run_step(
+                        results,
+                        "quality",
+                        quality_entry[1],
+                        lambda: _run_one_module(
+                            target_root,
+                            "quality",
+                            mode,
+                            fix,
+                            severity,
+                            fast,
+                            shared_cov,
+                            req=req,
+                        ),
+                    )
         finally:
             if cov_tmp is not None:
                 shutil.rmtree(cov_tmp, ignore_errors=True)

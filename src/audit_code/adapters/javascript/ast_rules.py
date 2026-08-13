@@ -64,6 +64,53 @@ def _build_parent_map(root_node):
     return parents
 
 
+class _FileCtx:
+    """One parse + one bucketing walk per file, shared by every rule.
+
+    Each rule used to re-parse and re-walk the whole tree (9 parses + 9 full
+    walks per file, 3 parent maps); that was ~93% of javascript-phd's time.
+    Candidate nodes are bucketed in walk order, so per-rule iteration order —
+    and therefore finding order — is byte-identical to the per-rule walks.
+    """
+
+    __slots__ = (
+        "text",
+        "src",
+        "tree",
+        "calls",
+        "attrs",
+        "exports",
+        "funcs",
+        "_parents",
+    )
+
+    def __init__(self, path: Path, text: str):
+        self.text = text
+        self.src = text.encode()
+        self.tree = _parser_for(path).parse(self.src)
+        self.calls: list = []  # call_expression
+        self.attrs: list = []  # jsx_attribute
+        self.exports: list = []  # export_statement
+        self.funcs: list = []  # function_declaration | arrow_function
+        for n in _walk(self.tree.root_node):
+            t = n.type
+            if t == "call_expression":
+                self.calls.append(n)
+            elif t == "jsx_attribute":
+                self.attrs.append(n)
+            elif t == "export_statement":
+                self.exports.append(n)
+            elif t in ("function_declaration", "arrow_function"):
+                self.funcs.append(n)
+        self._parents = None
+
+    @property
+    def parents(self):
+        if self._parents is None:
+            self._parents = _build_parent_map(self.tree.root_node)
+        return self._parents
+
+
 def _has_catch_in_chain(node, parents, src, max_depth=15) -> bool:
     """Walk up from a call_expression to check if .catch() appears anywhere
     in the method chain, traversing through member_expression and
@@ -93,16 +140,12 @@ def _has_catch_in_chain(node, parents, src, max_depth=15) -> bool:
 # ── rule: useEffect missing dependency array (J1.7) ─────────────────────
 
 
-def _check_useffect_deps(root: Path, sources: dict[Path, str]) -> list[Finding]:
+def _check_useffect_deps(root: Path, sources: dict) -> list[Finding]:
     findings: list[Finding] = []
-    for path, text in sources.items():
-        parser = _parser_for(path)
-        tree = parser.parse(text.encode())
-        src = text.encode()
+    for path, ctx in sources.items():
+        src = ctx.src
 
-        for node in _walk(tree.root_node):
-            if node.type != "call_expression":
-                continue
+        for node in ctx.calls:
             fn = node.child_by_field_name("function")
             if fn is None:
                 continue
@@ -132,17 +175,13 @@ def _check_useffect_deps(root: Path, sources: dict[Path, str]) -> list[Finding]:
 # ── rule: dangerouslySetInnerHTML via AST (J1.1 — AST version) ───────────
 
 
-def _check_dangerous_html(root: Path, sources: dict[Path, str]) -> list[Finding]:
+def _check_dangerous_html(root: Path, sources: dict) -> list[Finding]:
     """AST-level check: any JSX attribute named dangerouslySetInnerHTML."""
     findings: list[Finding] = []
-    for path, text in sources.items():
-        parser = _parser_for(path)
-        tree = parser.parse(text.encode())
-        src = text.encode()
+    for path, ctx in sources.items():
+        src = ctx.src
 
-        for node in _walk(tree.root_node):
-            if node.type != "jsx_attribute":
-                continue
+        for node in ctx.attrs:
             name_node = next((c for c in node.children if c.is_named), None)
             if name_node is None:
                 continue
@@ -175,21 +214,17 @@ def _check_fetch_no_error(root: Path, sources: dict[Path, str]) -> list[Finding]
     that shadows the global fetch() API, so every bare `fetch(...)` call in
     the file invokes the local wrapper, not a real network request."""
     findings: list[Finding] = []
-    for path, text in sources.items():
-        if _FETCH_SHADOW_RE.search(text):
+    for path, ctx in sources.items():
+        if _FETCH_SHADOW_RE.search(ctx.text):
             continue
-        parser = _parser_for(path)
-        tree = parser.parse(text.encode())
-        src = text.encode()
-        parents = _build_parent_map(tree.root_node)
+        src = ctx.src
+        parents = ctx.parents
 
         # Track which fetch() root calls we've already flagged to avoid
         # double-flagging when .then() is also present.
         flagged_lines: set[int] = set()
 
-        for node in _walk(tree.root_node):
-            if node.type != "call_expression":
-                continue
+        for node in ctx.calls:
             fn = node.child_by_field_name("function")
             if fn is None:
                 continue
@@ -226,17 +261,13 @@ def _check_fetch_no_error(root: Path, sources: dict[Path, str]) -> list[Finding]
 # ── rule: J1.6 — missing key in .map() returning JSX ─────────────────────
 
 
-def _check_map_missing_key(root: Path, sources: dict[Path, str]) -> list[Finding]:
+def _check_map_missing_key(root: Path, sources: dict) -> list[Finding]:
     """Flag .map() calls that return JSX without a key prop."""
     findings: list[Finding] = []
-    for path, text in sources.items():
-        parser = _parser_for(path)
-        tree = parser.parse(text.encode())
-        src = text.encode()
+    for path, ctx in sources.items():
+        src = ctx.src
 
-        for node in _walk(tree.root_node):
-            if node.type != "call_expression":
-                continue
+        for node in ctx.calls:
             fn = node.child_by_field_name("function")
             if fn is None or fn.type != "member_expression":
                 continue
@@ -324,17 +355,13 @@ def _check_map_missing_key(root: Path, sources: dict[Path, str]) -> list[Finding
 # ── rule: J1.11 — inline style= objects ──────────────────────────────────
 
 
-def _check_inline_style_objects(root: Path, sources: dict[Path, str]) -> list[Finding]:
+def _check_inline_style_objects(root: Path, sources: dict) -> list[Finding]:
     """Flag JSX style={{...}} inline objects (new object every render)."""
     findings: list[Finding] = []
-    for path, text in sources.items():
-        parser = _parser_for(path)
-        tree = parser.parse(text.encode())
-        src = text.encode()
+    for path, ctx in sources.items():
+        src = ctx.src
 
-        for node in _walk(tree.root_node):
-            if node.type != "jsx_attribute":
-                continue
+        for node in ctx.attrs:
             name_node = next((c for c in node.children if c.is_named), None)
             if name_node is None:
                 continue
@@ -364,18 +391,14 @@ def _check_inline_style_objects(root: Path, sources: dict[Path, str]) -> list[Fi
 # ── rule: J1.13 — .then() missing .catch() ───────────────────────────────
 
 
-def _check_then_no_catch(root: Path, sources: dict[Path, str]) -> list[Finding]:
+def _check_then_no_catch(root: Path, sources: dict) -> list[Finding]:
     """Flag .then() chains without a terminal .catch()."""
     findings: list[Finding] = []
-    for path, text in sources.items():
-        parser = _parser_for(path)
-        tree = parser.parse(text.encode())
-        src = text.encode()
-        parents = _build_parent_map(tree.root_node)
+    for path, ctx in sources.items():
+        src = ctx.src
+        parents = ctx.parents
 
-        for node in _walk(tree.root_node):
-            if node.type != "call_expression":
-                continue
+        for node in ctx.calls:
             fn = node.child_by_field_name("function")
             if fn is None or fn.type != "member_expression":
                 continue
@@ -407,18 +430,14 @@ def _check_then_no_catch(root: Path, sources: dict[Path, str]) -> list[Finding]:
 # ── rule: J1.14 — duplicate export names ──────────────────────────────────
 
 
-def _check_duplicate_exports(root: Path, sources: dict[Path, str]) -> list[Finding]:
+def _check_duplicate_exports(root: Path, sources: dict) -> list[Finding]:
     """Flag files where the same name is exported more than once."""
     findings: list[Finding] = []
-    for path, text in sources.items():
-        parser = _parser_for(path)
-        tree = parser.parse(text.encode())
-        src = text.encode()
+    for path, ctx in sources.items():
+        src = ctx.src
 
         seen: dict[str, int] = {}  # name -> first line
-        for node in _walk(tree.root_node):
-            if node.type != "export_statement":
-                continue
+        for node in ctx.exports:
             # Extract the exported name
             exported_name = None
             for child in node.children:
@@ -463,9 +482,7 @@ def _check_duplicate_exports(root: Path, sources: dict[Path, str]) -> list[Findi
 # ── rule: J1.8 — useState variable never used in JSX ────────────────────
 
 
-def _check_usestate_unused_in_jsx(
-    root: Path, sources: dict[Path, str]
-) -> list[Finding]:
+def _check_usestate_unused_in_jsx(root: Path, sources: dict) -> list[Finding]:
     """Flag useState destructured variables that are never read anywhere else
     in the enclosing function body — i.e. only ever written via the setter.
 
@@ -477,15 +494,11 @@ def _check_usestate_unused_in_jsx(
     read at all, anywhere in the body, still catches genuinely dead state
     while dropping both false-positive classes."""
     findings: list[Finding] = []
-    for path, text in sources.items():
-        parser = _parser_for(path)
-        tree = parser.parse(text.encode())
-        src = text.encode()
-        parents = _build_parent_map(tree.root_node)
+    for path, ctx in sources.items():
+        src = ctx.src
+        parents = ctx.parents
 
-        for fn_node in _walk(tree.root_node):
-            if fn_node.type not in ("function_declaration", "arrow_function"):
-                continue
+        for fn_node in ctx.funcs:
             body = fn_node.child_by_field_name("body")
             if body is None:
                 continue
@@ -565,17 +578,13 @@ def _check_usestate_unused_in_jsx(
 # ── rule: J2.3 — React.memo missing on exported components ───────────────
 
 
-def _check_missing_react_memo(root: Path, sources: dict[Path, str]) -> list[Finding]:
+def _check_missing_react_memo(root: Path, sources: dict) -> list[Finding]:
     """Flag exported components not wrapped in React.memo."""
     findings: list[Finding] = []
-    for path, text in sources.items():
-        parser = _parser_for(path)
-        tree = parser.parse(text.encode())
-        src = text.encode()
+    for path, ctx in sources.items():
+        src = ctx.src
 
-        for node in _walk(tree.root_node):
-            if node.type != "export_statement":
-                continue
+        for node in ctx.exports:
             # Skip export default wrapped in React.memo
             child = next(
                 (c for c in node.children if c.is_named and c.type != "export"), None
@@ -672,13 +681,14 @@ _RULES = [
 
 def run(root: Path, files: list[Path]) -> list[Finding]:
     """Run all AST-based JS PhD rules and return findings."""
-    sources = {}
+    sources: dict[Path, _FileCtx] = {}
     for f in files:
         if f.suffix in _ALL_EXT:
             try:
-                sources[f] = f.read_text(encoding="utf-8", errors="replace")
+                text = f.read_text(encoding="utf-8", errors="replace")
             except OSError:
-                pass
+                continue
+            sources[f] = _FileCtx(f, text)
 
     findings: list[Finding] = []
     for rule in _RULES:
