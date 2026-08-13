@@ -1832,7 +1832,9 @@ def main(argv=None):
     seen_defs = set()
     for p, tree in sorted(trees.items()):
         f = rel(p)
-        for node in nodes:
+        # walk THIS file's tree — a stale `nodes` from the loop above once
+        # made T2/T3 scan one arbitrary file's defs for every module
+        for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             nm = node.name
