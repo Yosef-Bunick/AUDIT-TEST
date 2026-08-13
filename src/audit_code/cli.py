@@ -873,7 +873,12 @@ def _split_path_json(args: list[str]) -> tuple[str | None, str, list[str]]:
             i += 2
             continue
         if a.startswith(("/", "C:", "D:")):
-            root = a
+            # a path-like arg that is an existing FILE is a handler operand
+            # (e.g. `bottle C:\x\driver.py`), not the target directory
+            if Path(a).is_file():
+                leftover.append(a)
+            else:
+                root = a
             i += 1
             continue
         leftover.append(a)
@@ -1316,8 +1321,12 @@ def _bottleneck_profile(target: Path, spec: str) -> tuple[dict | None, str]:
 
     with tempfile.TemporaryDirectory() as td:
         out_json = Path(td) / "scalene.json"
-        cmd = tool.split() + ["--cli", "--json", "--outfile", str(out_json)] + prog
-        rc, out = _run(cmd, target, timeout=600)
+        flags = ["--cli", "--json", "--outfile", str(out_json)]
+        # scalene >= 2.x moved to `scalene run <args>`; older versions take
+        # the args directly. Try the new form first, fall back to legacy.
+        rc, out = _run(tool.split() + ["run"] + flags + prog, target, timeout=600)
+        if not out_json.exists() or not out_json.stat().st_size:
+            rc, out = _run(tool.split() + flags + prog, target, timeout=600)
         if not out_json.exists() or not out_json.stat().st_size:
             tail = "\n    ".join(out.strip().splitlines()[-3:])
             return None, f"SKIP: scalene produced no output (exit {rc})\n    {tail}"

@@ -39,12 +39,36 @@ ENV_SKIP_RE = re.compile(
 )
 
 
+# Plugins disabled for solo one-test re-runs only. Each is inert without its
+# opt-in flag (--typeguard-packages, --count, --cov, -n) so disabling cannot
+# change a solo verdict, but their import/bootstrap costs ~1.5s per re-run.
+# Deliberately NOT disabled: cacheprovider (provides the `cache` fixture),
+# rerunfailures (activates via @pytest.mark.flaky with no CLI flag), and
+# pytest_timeout (a marker-timeout test would degrade to the 180s subprocess
+# kill and reclassify real -> hang).
+_SOLO_PLUGIN_ARGS = (
+    "-p",
+    "no:langsmith_plugin",
+    "-p",
+    "no:typeguard",
+    "-p",
+    "no:repeat",
+    "-p",
+    "no:pytest_cov",
+    "-p",
+    "no:xdist",
+    "-p",
+    "no:xdist.looponfail",
+)
+
+
 def _run_pytest(
     target: str,
     cwd: Path,
     timeout: int,
     cov_file: Path | None = None,
     xdist: bool = True,
+    extra: tuple = (),
 ) -> tuple[str, int]:
     """Run pytest. When cov_file is given, run under coverage and write the
     data there — so the quality audit can reuse this one run for its Q5
@@ -52,8 +76,8 @@ def _run_pytest(
 
     xdist=False skips `-n auto`: a solo one-test re-run gains nothing from
     N workers but pays their full startup (~17s of pure waste per re-run on
-    a 20-core box — measured; with up to MAX_SOLO_RERUNS re-runs this was
-    the single largest cost of a full audit on a failing suite)."""
+    a 20-core box — measured). extra: additional pytest args (solo re-runs
+    pass _SOLO_PLUGIN_ARGS); never applied to the coverage run."""
     if cov_file is not None:
         cmd = [
             sys.executable,
@@ -77,7 +101,15 @@ def _run_pytest(
                     xdist_args = ["-n", "auto"]
             except (ImportError, ValueError):
                 pass
-        cmd = [sys.executable, "-m", "pytest", target, *PYTEST_ARGS, *xdist_args]
+        cmd = [
+            sys.executable,
+            "-m",
+            "pytest",
+            target,
+            *PYTEST_ARGS,
+            *xdist_args,
+            *extra,
+        ]
         env = None
     proc = subprocess.run(
         cmd,
@@ -117,7 +149,9 @@ def _parse(output: str, returncode: int) -> dict:
 
 def _classify_solo(target_root: Path, nodeid: str) -> str:
     try:
-        out, rc = _run_pytest(nodeid, target_root, SOLO_TIMEOUT, xdist=False)
+        out, rc = _run_pytest(
+            nodeid, target_root, SOLO_TIMEOUT, xdist=False, extra=_SOLO_PLUGIN_ARGS
+        )
     except subprocess.TimeoutExpired:
         return "hang (timed out solo)"
     if rc == 0:
@@ -172,6 +206,24 @@ def _s1_failures(
     head_fails = (
         _baseline_failures(target_root) if (baseline and r["failures"]) else None
     )
+
+    # Solo re-runs are independent pytest subprocesses — classify them
+    # concurrently (4-wide) instead of sequentially: ~47s -> ~15-22s on a
+    # 9-failure suite, classifications verified identical. Submitted only
+    # AFTER _baseline_failures so the HEAD-worktree suite run never contends
+    # with the re-runs. Deduped: pytest can emit FAILED and ERROR rows for
+    # the same nodeid, which must not race itself.
+    classifications: dict[str, str] = {}
+    if not fast and r["failures"]:
+        to_run = list(dict.fromkeys(nid for _, nid in r["failures"][:MAX_SOLO_RERUNS]))
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(4, len(to_run))) as ex:
+            futures = {
+                nid: ex.submit(_classify_solo, target_root, nid) for nid in to_run
+            }
+            classifications = {nid: fut.result() for nid, fut in futures.items()}
+
     for i, (kind, nodeid) in enumerate(r["failures"]):
         high += 1
         tag = ""
@@ -184,8 +236,8 @@ def _s1_failures(
         cls = ""
         if not fast:
             cls = (
-                f"  [{_classify_solo(target_root, nodeid)}]"
-                if i < MAX_SOLO_RERUNS
+                f"  [{classifications[nodeid]}]"
+                if nodeid in classifications
                 else "  [unclassified - past solo re-run cap]"
             )
         stdout_lines.append(f"  {kind:6} {nodeid}{cls}{tag}")

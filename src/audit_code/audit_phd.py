@@ -1743,25 +1743,48 @@ def main(argv=None):
                             f"`import {a.name}` - actual module is {submods[a.name]}",
                         )
 
-    # T1 - prod modules untouched by any test (Dimension 2 proxy)
+    # T1 - prod modules untouched by any test (Dimension 2 proxy).
+    # Per-module regexes over the full multi-MB test blob were O(modules x
+    # blob); the import checks only ever match on/around import lines and the
+    # quoted check only on quote-delimited tokens, so scan those once:
+    # an import mini-blob (each line containing "import" + its successor, for
+    # the multi-line `from pkg import (\n  name` form) and a set of
+    # quote-delimited tokens replace ~3 full-blob scans per module.
     test_blob = "\n".join(tests.values())
+    _import_lines: list[str] = []
+    _seen_line_idx: set[int] = set()
+    _blob_lines = test_blob.splitlines()
+    for _i, _ln in enumerate(_blob_lines):
+        if "import" in _ln:
+            for _j in (_i, _i + 1):
+                if _j < len(_blob_lines) and _j not in _seen_line_idx:
+                    _seen_line_idx.add(_j)
+                    _import_lines.append(_blob_lines[_j])
+    import_blob = "\n".join(_import_lines)
+    quoted_tokens = {
+        m.group(1) for m in re.finditer(r"[\"']([^\"'\n]+)(?=[\"'])", test_blob)
+    }
     for p in sorted(trees):
         if p.name == "__init__.py":
             continue
         mn = modname(p)
         stem = p.stem
         pkg = mn.rsplit(".", 1)[0] if "." in mn else ""
+        if "'" in stem or '"' in stem or "\n" in stem:
+            quoted = re.search(rf"""["']{re.escape(stem)}["']""", test_blob)
+        else:
+            quoted = stem in quoted_tokens
         touched = (
             mn in test_blob
-            or re.search(rf"import\s+{re.escape(stem)}\b", test_blob)
+            or re.search(rf"import\s+{re.escape(stem)}\b", import_blob)
             or (
                 pkg
                 and re.search(
                     rf"from\s+{re.escape(pkg)}(\.{re.escape(stem)})?\s+import[^\n]*\b{re.escape(stem)}\b",
-                    test_blob,
+                    import_blob,
                 )
             )
-            or re.search(rf"""["']{re.escape(stem)}["']""", test_blob)
+            or quoted
         )
         if not touched:
             sink.add("T1", rel(p), 1, f"module `{mn}` referenced by no test")

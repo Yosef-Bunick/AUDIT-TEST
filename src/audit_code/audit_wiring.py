@@ -308,11 +308,71 @@ def parse_all(files):
     return trees
 
 
+class _Buckets:
+    """Single-walk node index for one tree.
+
+    The walk-based consumers in this module used to re-traverse the same
+    ~400k nodes once each (8 full walks on a large repo); every consumer now
+    reads from these lists instead. `deflike` keeps ClassDef and top-level
+    FunctionDef in one list in walk order, so def-site ordering (CHECK 1
+    output, --dead-json) is unchanged. Cached on the tree object itself —
+    trees come from audit_shared's content-keyed parse cache, so the index
+    stays valid exactly as long as the tree does.
+    """
+
+    __slots__ = (
+        "deflike",
+        "classes",
+        "imports",
+        "importfroms",
+        "names",
+        "attrs",
+        "consts",
+        "ifs",
+    )
+
+    def __init__(self, tree):
+        self.deflike: list = []
+        self.classes: list = []
+        self.imports: list = []
+        self.importfroms: list = []
+        self.names: list = []
+        self.attrs: list = []
+        self.consts: list = []
+        self.ifs: list = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                self.deflike.append(node)
+                self.classes.append(node)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self.deflike.append(node)
+            elif isinstance(node, ast.Name):
+                self.names.append(node)
+            elif isinstance(node, ast.Attribute):
+                self.attrs.append(node)
+            elif isinstance(node, ast.Constant):
+                self.consts.append(node)
+            elif isinstance(node, ast.Import):
+                self.imports.append(node)
+            elif isinstance(node, ast.ImportFrom):
+                self.importfroms.append(node)
+            elif isinstance(node, ast.If):
+                self.ifs.append(node)
+
+
+def _buckets(tree) -> _Buckets:
+    b = getattr(tree, "_aw_buckets", None)
+    if b is None:
+        b = _Buckets(tree)
+        tree._aw_buckets = b
+    return b
+
+
 def index_defs(trees):
     """{name: [(path, qualname, lineno, kind)]} for functions, methods, classes."""
     defs = collections.defaultdict(list)
     for p, tree in trees.items():
-        for node in ast.walk(tree):
+        for node in _buckets(tree).deflike:
             if isinstance(node, ast.ClassDef):
                 defs[node.name].append((p, node.name, node.lineno, "class"))
                 for ch in node.body:
@@ -320,7 +380,7 @@ def index_defs(trees):
                         defs[ch.name].append(
                             (p, f"{node.name}.{ch.name}", ch.lineno, "method")
                         )
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            else:
                 # module-level only; methods were handled above. Detect by
                 # checking col_offset == 0 (cheap and good enough).
                 if node.col_offset == 0:
@@ -340,13 +400,12 @@ def framework_wired_methods(trees):
     """
     local_classes = set()
     for tree in trees.values():
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                local_classes.add(node.name)
+        for node in _buckets(tree).classes:
+            local_classes.add(node.name)
     wired = collections.defaultdict(set)
     for p, tree in trees.items():
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ClassDef) or not node.bases:
+        for node in _buckets(tree).classes:
+            if not node.bases:
                 continue
             base_names = set()
             for b in node.bases:
@@ -368,9 +427,28 @@ def index_refs(trees):
     """{name: set(paths that reference it in any form)}"""
     refs = collections.defaultdict(set)
     for p, tree in trees.items():
-        v = Refs()
-        v.visit(tree)
-        for n in v.names | v.strings:
+        b = _buckets(tree)
+        names: set = set()
+        for node in b.attrs:
+            names.add(node.attr)
+        for node in b.names:
+            if isinstance(node.ctx, ast.Load):
+                names.add(node.id)
+        for node in b.consts:
+            v = node.value
+            if (
+                isinstance(v, str)
+                and 3 < len(v) < 60
+                and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v)
+            ):
+                names.add(v)
+        for node in b.importfroms:
+            for alias in node.names:
+                names.add(alias.name)
+        for node in b.imports:
+            for alias in node.names:
+                names.add(alias.name.split(".")[-1])
+        for n in names:
             refs[n].add(p)
     return refs
 
@@ -710,9 +788,8 @@ def audit_overrides(trees, defs, prod_files):
     for p, tree in trees.items():
         if p not in prod_files:
             continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                classes[node.name] = (p, node)
+        for node in _buckets(tree).classes:
+            classes[node.name] = (p, node)
     findings = []
     for cname, (p, node) in classes.items():
         child_refs = _class_refs(node)
@@ -836,7 +913,7 @@ def audit_transitive_config(config_results, trees, dead_names, testonly_names):
     for p, tree in trees.items():
         spans[p] = [
             (n.lineno, n.end_lineno or n.lineno, n.name)
-            for n in ast.walk(tree)
+            for n in _buckets(tree).deflike
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
         ]
 
@@ -878,19 +955,21 @@ def audit_stdout_purity(trees):
     edges = collections.defaultdict(set)
     for p, tree in trees.items():
         src = modname(p)
-        # ast.walk, not tree.body: function-level imports execute in-process.
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
+        b = _buckets(tree)
+        # all imports, not just tree.body: function-level imports execute
+        # in-process.
+        for node in b.importfroms:
+            if node.module:
                 if node.module in mods:
                     edges[src].add(node.module)
                 for a in node.names:
                     cand = f"{node.module}.{a.name}"
                     if cand in mods:
                         edges[src].add(cand)
-            elif isinstance(node, ast.Import):
-                for a in node.names:
-                    if a.name in mods:
-                        edges[src].add(a.name)
+        for node in b.imports:
+            for a in node.names:
+                if a.name in mods:
+                    edges[src].add(a.name)
 
     reach, stack = set(), [m for m in AGENT_ENTRY_MODULES if m in mods]
     while stack:
@@ -1047,19 +1126,19 @@ def _collect_imports(trees):
     dotted: set[str] = set()
     leaves: set[str] = set()
     for tree in trees.values():
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for a in node.names:
-                    dotted.add(a.name)
-                    leaves.add(a.name.split(".")[0])
-                    leaves.add(a.name.split(".")[-1])
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    dotted.add(node.module)
-                    # `from ._tool_runner import X`: the module leaf keeps it alive.
-                    leaves.add(node.module.split(".")[-1])
-                for a in node.names:
-                    leaves.add(a.name)
+        b = _buckets(tree)
+        for node in b.imports:
+            for a in node.names:
+                dotted.add(a.name)
+                leaves.add(a.name.split(".")[0])
+                leaves.add(a.name.split(".")[-1])
+        for node in b.importfroms:
+            if node.module:
+                dotted.add(node.module)
+                # `from ._tool_runner import X`: the module leaf keeps it alive.
+                leaves.add(node.module.split(".")[-1])
+            for a in node.names:
+                leaves.add(a.name)
     return dotted, leaves
 
 
@@ -1087,16 +1166,16 @@ def find_dead_modules(prod, prod_trees, test_trees):
     mentioned: dict[str, set] = collections.defaultdict(set)
     main_guard: set[Path] = set()
     for p, tree in prod_trees.items():
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Name):
-                mentioned[node.id].add(p)
-            elif isinstance(node, ast.Attribute):
-                mentioned[node.attr].add(p)
-            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+        b = _buckets(tree)
+        for node in b.names:
+            mentioned[node.id].add(p)
+        for node in b.attrs:
+            mentioned[node.attr].add(p)
+        for node in b.consts:
+            if isinstance(node.value, str):
                 mentioned[node.value].add(p)
-            elif isinstance(node, ast.If) and (
-                "__main__" in ast.dump(node.test) and "__name__" in ast.dump(node.test)
-            ):
+        for node in b.ifs:
+            if "__main__" in ast.dump(node.test) and "__name__" in ast.dump(node.test):
                 main_guard.add(p)
 
     out = []
