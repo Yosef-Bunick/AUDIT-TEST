@@ -62,6 +62,8 @@ from pathlib import Path
 
 from audit_code.audit_config import DOC_THRESHOLD_PCT, MIN_FLAG_BODY_LINES, TOOL_TIMEOUT
 from audit_code.audit_shared import EXCLUDE_DIRS, force_utf8_streams
+from audit_code.manifests import declared_dependencies
+from audit_code.testpaths import discover_test_dirs
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -266,54 +268,14 @@ def q_mypy(root: Path, counts: dict, strict: bool):
 
 
 def _declared_deps(root: Path) -> set:
-    """Top-level dependency names (PEP 503 normalized) from pyproject.toml /
-    requirements*.txt. Empty set = no manifest."""
+    """Top-level dependency names (PEP 503 normalized) declared by the project.
 
-    def norm(n):
-        return re.sub(r"[-_.]+", "-", n).lower()
-
-    name_re = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
-    names: set = set()
-    # audits often target a package subdir — walk up to the manifest holder
-    cur = root
-    for _ in range(4):
-        if (cur / "pyproject.toml").exists() or any(cur.glob("requirements*.txt")):
-            root = cur
-            break
-        if (cur / ".git").exists() or cur.parent == cur:
-            break
-        cur = cur.parent
-    pyproject = root / "pyproject.toml"
-    if pyproject.exists():
-        try:
-            import tomllib
-
-            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        except (ImportError, OSError, ValueError):
-            data = {}
-        proj = data.get("project") or {}
-        specs = list(proj.get("dependencies") or [])
-        for extra in (proj.get("optional-dependencies") or {}).values():
-            specs.extend(extra)
-        for spec in specs:
-            m = name_re.match(str(spec))
-            if m:
-                names.add(norm(m.group(1)))
-        poetry = (data.get("tool") or {}).get("poetry") or {}
-        names |= {
-            norm(n) for n in poetry.get("dependencies") or {} if n.lower() != "python"
-        }
-    for req in root.glob("requirements*.txt"):
-        try:
-            for line in req.read_text(encoding="utf-8", errors="replace").splitlines():
-                line = line.strip()
-                if line and not line.startswith(("#", "-")):
-                    m = name_re.match(line)
-                    if m:
-                        names.add(norm(m.group(1)))
-        except OSError:
-            continue
-    return names
+    Delegates to audit_code.manifests: nearest manifest first, then sub-package
+    manifests when the nearest declares nothing (a tool-config-only root
+    pyproject.toml). Empty set = no dependencies declared anywhere, the only
+    case where the environment fallback in q_cves is correct.
+    """
+    return declared_dependencies(root)
 
 
 def q_cves(root: Path, counts: dict):
@@ -639,7 +601,11 @@ def main():  # audit: ok (CLI entry point)
     force_utf8_streams()
     ap = argparse.ArgumentParser()
     ap.add_argument("--path", default=str(ROOT), help="repo root to audit")
-    ap.add_argument("--tests", default="tests", help="tests dir relative to root")
+    ap.add_argument(
+        "--tests",
+        default=None,
+        help="tests dir relative to root (default: the project's pytest testpaths)",
+    )
     ap.add_argument("--fast", action="store_true", help="skip the Q5 coverage run")
     ap.add_argument("--strict-mypy", action="store_true")
     ap.add_argument("--mutation", action="store_true")
@@ -652,7 +618,11 @@ def main():  # audit: ok (CLI entry point)
     args = ap.parse_args()
 
     root = Path(args.path).resolve()
-    tests_dir = (root / args.tests).resolve()
+    # Honour the project's own pytest `testpaths` before guessing `tests/`.
+    # This legacy CLI carries a single tests dir, so multi-entry testpaths
+    # collapse to the first declared one (src/audit_code/quality.py, the
+    # module the `audit-test` CLI actually uses, handles all of them).
+    tests_dir = discover_test_dirs(root, args.tests)[0]
     counts = {"HIGH": 0, "MEDIUM": 0, "INFO": 0}
     prod, tests = _py_files(root, tests_dir)
     print(f"scanned root: {root} ({len(prod)} prod files, {len(tests)} test files)\n")

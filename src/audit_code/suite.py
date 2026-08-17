@@ -16,8 +16,13 @@ from audit_code.config import (
     SOLO_TIMEOUT,
 )
 from audit_code.models import AuditResult, AuditStatus, Finding, Severity
+from audit_code.testpaths import pytest_targets
 
 PYTEST_ARGS = ["-q", "--tb=no", "-p", "no:logfire", "-p", "no:deepeval"]
+# Last-resort guess only. The real targets come from the project's own pytest
+# config (`testpaths`) via audit_code.testpaths.pytest_targets() — hardcoding
+# "tests" made S1/S2 triage a stale one-file directory in any repo whose suite
+# lives elsewhere.
 TESTS_DIR = "tests"
 
 VERDICT_RE = re.compile(r"(\d+) passed|(\d+) failed|no tests ran", re.MULTILINE)
@@ -63,7 +68,7 @@ _SOLO_PLUGIN_ARGS = (
 
 
 def _run_pytest(
-    target: str,
+    target: str | list[str] | tuple[str, ...],
     cwd: Path,
     timeout: int,
     cov_file: Path | None = None,
@@ -77,7 +82,11 @@ def _run_pytest(
     xdist=False skips `-n auto`: a solo one-test re-run gains nothing from
     N workers but pays their full startup (~17s of pure waste per re-run on
     a 20-core box — measured). extra: additional pytest args (solo re-runs
-    pass _SOLO_PLUGIN_ARGS); never applied to the coverage run."""
+    pass _SOLO_PLUGIN_ARGS); never applied to the coverage run.
+
+    target may be a single path/nodeid or a list of them (a project can declare
+    several `testpaths`)."""
+    targets = [target] if isinstance(target, str) else list(target)
     if cov_file is not None:
         cmd = [
             sys.executable,
@@ -87,7 +96,7 @@ def _run_pytest(
             f"--source={cwd}",
             "-m",
             "pytest",
-            target,
+            *targets,
             *PYTEST_ARGS,
         ]
         env = dict(os.environ, COVERAGE_FILE=str(cov_file))
@@ -105,7 +114,7 @@ def _run_pytest(
             sys.executable,
             "-m",
             "pytest",
-            target,
+            *targets,
             *PYTEST_ARGS,
             *xdist_args,
             *extra,
@@ -161,7 +170,9 @@ def _classify_solo(target_root: Path, nodeid: str) -> str:
     return "real - fails solo too"
 
 
-def _baseline_failures(target_root: Path) -> set | None:
+def _baseline_failures(
+    target_root: Path, targets: list[str] | None = None
+) -> set | None:
     tmp = Path(tempfile.mkdtemp(prefix="audit_suite_head_"))
     wt = tmp / "head_wt"
     try:
@@ -174,7 +185,9 @@ def _baseline_failures(target_root: Path) -> set | None:
         )
         if add.returncode != 0:
             return None
-        out, rc = _run_pytest(TESTS_DIR, wt, FULL_SUITE_TIMEOUT)
+        # The worktree is a checkout of the same project, so it declares the
+        # same testpaths — re-discover there rather than reusing this tree's.
+        out, rc = _run_pytest(targets or pytest_targets(wt), wt, FULL_SUITE_TIMEOUT)
         return {nid for _, nid in _parse(out, rc)["failures"]}
     except subprocess.TimeoutExpired:
         return None
@@ -199,12 +212,15 @@ def _s1_failures(
     stdout_lines: list[str],
     fast: bool,
     baseline: bool,
+    targets: list[str] | None = None,
 ) -> int:
     high = 0
     sec = f"S1 [HIGH] failed/errored tests (solo re-run classified) - {len(r['failures'])} finding(s)"
     stdout_lines.extend(("=" * 74, sec, "=" * 74))
     head_fails = (
-        _baseline_failures(target_root) if (baseline and r["failures"]) else None
+        _baseline_failures(target_root, targets)
+        if (baseline and r["failures"])
+        else None
     )
 
     # Solo re-runs are independent pytest subprocesses — classify them
@@ -352,21 +368,29 @@ def run(
     baseline: bool = False,
     strict: bool = True,
     cov_file: Path | None = None,
+    tests: str | None = None,
 ) -> AuditResult:
     """Run the suite audit.
 
     cov_file: if given, the main suite run is instrumented with coverage and
     its data written there, so the quality audit can reuse it (one test run
-    for both audits instead of two)."""
+    for both audits instead of two).
+
+    tests: explicit test directory (the --tests flag). When omitted, the
+    project's own pytest `testpaths` decides — see audit_code.testpaths."""
     findings: list[Finding] = []
     stdout_lines: list[str] = []
     force_utf8_streams()
 
-    header = f"running: pytest {TESTS_DIR} {' '.join(PYTEST_ARGS)}  (timeout {FULL_SUITE_TIMEOUT}s)"
+    targets = pytest_targets(target_root, tests)
+    header = (
+        f"running: pytest {' '.join(targets)} {' '.join(PYTEST_ARGS)}  "
+        f"(timeout {FULL_SUITE_TIMEOUT}s)"
+    )
     stdout_lines.append(header)
 
     try:
-        out, rc = _run_pytest(TESTS_DIR, target_root, FULL_SUITE_TIMEOUT, cov_file)
+        out, rc = _run_pytest(targets, target_root, FULL_SUITE_TIMEOUT, cov_file)
     except subprocess.TimeoutExpired:
         findings.append(
             Finding(
@@ -385,7 +409,7 @@ def run(
         )
 
     r = _parse(out, rc)
-    high = _s1_failures(target_root, r, findings, stdout_lines, fast, baseline)
+    high = _s1_failures(target_root, r, findings, stdout_lines, fast, baseline, targets)
     high += _s2_verdict(r, rc, findings, stdout_lines)
     med, info = _s3_s5_report(out, r, findings, stdout_lines)
 
@@ -426,9 +450,16 @@ if __name__ == "__main__":
     ap.add_argument("--fast", action="store_true")
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--strict", action="store_true")
+    ap.add_argument("--tests", default=None, help="override discovered testpaths")
     args = ap.parse_args()
     root = Path(args.path).resolve() if args.path else Path.cwd()
-    result = run(root, fast=args.fast, baseline=args.baseline, strict=args.strict)
+    result = run(
+        root,
+        fast=args.fast,
+        baseline=args.baseline,
+        strict=args.strict,
+        tests=args.tests,
+    )
     print(result.stdout)
     if args.strict and result.high:
         sys.exit(1)

@@ -37,6 +37,11 @@ from audit_code.models import (
     Finding,
     Severity,
 )
+from audit_code.manifests import (
+    declared_dependencies,
+    manifest_sources,
+)
+from audit_code.testpaths import discover_test_dirs
 
 EXCLUDE_DIRS = {
     ".git",
@@ -104,7 +109,25 @@ def _run(
         return -2, f"[failed to launch: {e}]"
 
 
-def _py_files(root: Path, tests_dir: Path) -> tuple[list[Path], list[Path]]:
+def _rel(root: Path, p: Path) -> Path:
+    try:
+        return p.relative_to(root)
+    except ValueError:
+        return p
+
+
+def _as_dirs(tests_dir) -> list[Path]:
+    """Accept a single Path or a sequence of them (projects may declare several
+    `testpaths`). Kept tolerant so older callers passing one Path still work."""
+    if tests_dir is None:
+        return []
+    if isinstance(tests_dir, (str, Path)):
+        return [Path(tests_dir)]
+    return [Path(d) for d in tests_dir]
+
+
+def _py_files(root: Path, tests_dir) -> tuple[list[Path], list[Path]]:
+    dirs = _as_dirs(tests_dir)
     prod: list[Path] = []
     tests: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
@@ -117,11 +140,8 @@ def _py_files(root: Path, tests_dir: Path) -> tuple[list[Path], list[Path]]:
                 continue
             if not should_audit(py_file):  # honour active focus group
                 continue
-            (
-                tests
-                if tests_dir in py_file.parents or py_file.parent == tests_dir
-                else prod
-            ).append(py_file)
+            is_test = any(d in py_file.parents or py_file.parent == d for d in dirs)
+            (tests if is_test else prod).append(py_file)
     return prod, tests
 
 
@@ -156,13 +176,19 @@ def _def_spans(path: Path) -> list[tuple[str, int, int, int]]:
 # and a full rerun is skipped. Any edit changes the fingerprint and reruns.
 
 
+# Ceiling on the suite Q5 will run ITSELF (no shared/cached coverage available).
+# Q5 is a coverage *reading*; it should piggyback on the suite audit's run, not
+# launch thousands of tests on its own initiative.
+_Q5_MAX_TEST_FILES = int(os.environ.get("AUDIT_Q5_MAX_TEST_FILES", "200"))
+
+
 def _q5_cache_dir(root: Path) -> Path:
     """Persistent, per-project directory for the Q5 coverage cache."""
     key = hashlib.sha256(str(Path(root).resolve()).encode("utf-8")).hexdigest()[:16]
     return Path(tempfile.gettempdir()) / "audit_q5_cache" / key
 
 
-def _q5_fingerprint(root: Path, tests_dir: Path, pytest_extra: str = "") -> str:
+def _q5_fingerprint(root: Path, tests_dir, pytest_extra: str = "") -> str:
     """Content hash of every source + test .py plus the pytest invocation."""
     prod, tests = _py_files(root, tests_dir)
     h = hashlib.sha256()
@@ -424,70 +450,16 @@ def _normalize_pkg(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def _manifest_root(root: Path) -> Path:
-    """The directory whose dependency manifests govern *root*.
-
-    An audit often targets a package subdirectory (e.g. src/pkg) while
-    pyproject/requirements live at the project root — walk up until a
-    manifest is found, stopping at a .git boundary (inclusive) or after
-    a few levels.
-    """
-    cur = root
-    for _ in range(4):
-        if (cur / "pyproject.toml").exists() or any(cur.glob("requirements*.txt")):
-            return cur
-        if (cur / ".git").exists() or cur.parent == cur:
-            break
-        cur = cur.parent
-    return root
-
-
 def _declared_dependencies(root: Path) -> set[str]:
     """Top-level dependency names declared by the project (normalized).
 
-    Sources: [project] dependencies + optional-dependencies and
-    [tool.poetry.dependencies] in pyproject.toml, plus requirements*.txt —
-    looked up from the nearest manifest-bearing ancestor of *root* (audits
-    frequently target a package subdir). Empty set = no manifest found.
+    Delegates to audit_code.manifests, which — unlike the old nearest-manifest-
+    only lookup — keeps searching sub-package manifests when the nearest one
+    declares nothing (a tool-config-only root pyproject.toml). An empty set now
+    genuinely means "this tree declares no dependencies anywhere", which is the
+    only case where the environment fallback below is correct.
     """
-    names: set[str] = set()
-    root = _manifest_root(root)
-    pyproject = root / "pyproject.toml"
-    if pyproject.exists():
-        try:
-            import tomllib
-        except ImportError:  # pragma: no cover - py<3.11
-            tomllib = None
-        if tomllib is not None:
-            try:
-                data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                data = {}
-            proj = data.get("project") or {}
-            specs = list(proj.get("dependencies") or [])
-            for extra in (proj.get("optional-dependencies") or {}).values():
-                specs.extend(extra)
-            for spec in specs:
-                m = _REQ_NAME_RE.match(str(spec))
-                if m:
-                    names.add(_normalize_pkg(m.group(1)))
-            poetry = (data.get("tool") or {}).get("poetry") or {}
-            for name in poetry.get("dependencies") or {}:
-                if name.lower() != "python":
-                    names.add(_normalize_pkg(name))
-    for req in root.glob("requirements*.txt"):
-        try:
-            lines = req.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith(("#", "-")):
-                continue
-            m = _REQ_NAME_RE.match(line)
-            if m:
-                names.add(_normalize_pkg(m.group(1)))
-    return names
+    return declared_dependencies(root)
 
 
 def _q4_cves(target_root, root, findings, counts, out):
@@ -510,6 +482,18 @@ def _q4_cves(target_root, root, findings, counts, out):
     label = "declared dependencies" if project_scope else "installed dependencies"
     out.append(f"Q4 [HIGH] known CVEs in {label}")
     out.append("=" * 74)
+    # Make the scope decision auditable: which manifests were believed, or —
+    # when nothing was found — say plainly that every unrelated package in the
+    # interpreter is about to be reported against this repo.
+    if declared:
+        srcs = [str(_rel(root, s)) for s in manifest_sources(root)]
+        out.append(f"  {len(declared)} declared dep(s) from: {', '.join(srcs) or '?'}")
+    elif not project_scope:
+        out.append(
+            "  no dependency manifest found anywhere under this tree — "
+            "falling back to the whole installed environment; findings may "
+            "belong to other projects sharing this interpreter"
+        )
     cve_found = False
 
     pip_audit = _tool("pip-audit", target_root)
@@ -681,6 +665,21 @@ def _q5_obtain_coverage(root, tests_dir, pytest_extra, shared_cov, tmp, cache_ke
             "run; set AUDIT_NO_Q5_CACHE=1 to force a rerun)"
         )
         return cached, dict(os.environ, COVERAGE_FILE=str(cached)), rc, True
+    # Guard against a surprise heavyweight run. Honouring the project's real
+    # `testpaths` (instead of the old hardcoded `tests/`) can point Q5 at a
+    # multi-thousand-test suite; launching that silently, from a *quality*
+    # audit, is not acceptable. With no shared suite run and no cache, stop and
+    # say so rather than burn the machine.
+    _, test_files = _py_files(root, tests_dir)
+    if len(test_files) > _Q5_MAX_TEST_FILES:
+        out.append(
+            f"  SKIP: {len(test_files)} test files under "
+            f"{', '.join(str(d) for d in _as_dirs(tests_dir))} exceeds the "
+            f"Q5 self-run cap ({_Q5_MAX_TEST_FILES}). Q5 reuses the `suite` "
+            f"audit's coverage run when both run together — do that, or raise "
+            f"AUDIT_Q5_MAX_TEST_FILES to opt into a full test run here."
+        )
+        return None, dict(os.environ), 0, False  # None = already explained
     data_file = tmp / ".coverage"
     env = dict(os.environ, COVERAGE_FILE=str(data_file))
     out.append("  running suite under coverage (this is a full test run)...")
@@ -693,7 +692,7 @@ def _q5_obtain_coverage(root, tests_dir, pytest_extra, shared_cov, tmp, cache_ke
             f"--source={root}",
             "-m",
             "pytest",
-            str(tests_dir),
+            *[str(d) for d in _as_dirs(tests_dir)],
             "-q",
             "--tb=no",
             *pytest_extra.split(),
@@ -756,6 +755,18 @@ def _q5_flag_never_run(root, tests_dir, cov, findings, counts, out):
                 if (b1 - b0 + 1) >= MIN_FLAG_BODY_LINES:
                     flagged.append((p.relative_to(root), defline, qual, b1 - b0 + 1))
     pct = 100.0 * (total - never) / total if total else 100.0
+    # Sanity gate. "0 of N defs executed" is never a coverage finding — it means
+    # the suite did not actually run (wrong target, collection errors, pytest
+    # died). Reporting it as N never-executed defs manufactured thousands of
+    # MEDIUMs out of a failed test run. Say what really happened instead.
+    if total and never == total:
+        out.append(
+            f"  SKIP: coverage data shows 0 of {total} defs executed — the "
+            f"suite did not run (wrong test target, collection errors, or "
+            f"pytest crashed). This is not a coverage result; no findings "
+            f"emitted. Check the `suite` audit's S1/S2/S3 output."
+        )
+        return
     counts["MEDIUM"] += len(flagged)
     out.append(
         f"  {total} defs scanned; {total - never} executed under tests "
@@ -803,6 +814,9 @@ def _q5_never_executed(
     # Persist a freshly produced coverage file (from either the shared
     # suite run or this mode's own run) so the next quality-only run is
     # instant while the source is unchanged.
+    if data_file is None:  # capped out; _q5_obtain_coverage already explained
+        out.append("")
+        return
     if not cache_hit and data_file.exists() and data_file.stat().st_size > 0:
         _q5_cache_save(root, cache_key, data_file)
     if not data_file.exists():
@@ -864,7 +878,10 @@ def _q7_test_hygiene(root, tests_dir, findings, counts, out):
     """Q7: flaky-test patterns — time.sleep() and reasonless skips."""
     out.append("=" * 74)
     hygiene_findings = []
-    for p in sorted(tests_dir.rglob("*.py")):
+    test_py = sorted(
+        {p for d in _as_dirs(tests_dir) if d.is_dir() for p in d.rglob("*.py")}
+    )
+    for p in test_py:
         if any(part in EXCLUDE_DIRS for part in p.parts):
             continue
         try:
@@ -935,7 +952,7 @@ def run_tools(
     target_root: Path,
     fast: bool = False,
     strict_mypy: bool = False,
-    tests: str = "tests",
+    tests: str | None = None,
 ) -> dict:
     """Coverage-free phase of the quality audit: Q0 + the Q1-Q4 tool pool +
     Q6/Q7/Q9. None of these need the test suite's coverage data, so the
@@ -949,11 +966,15 @@ def run_tools(
     force_utf8_streams()
 
     root = target_root.resolve()
-    tests_dir = (root / tests).resolve()
+    # The project's own pytest `testpaths` decides where the tests are; the
+    # explicit --tests flag overrides it; `tests/` is only the last resort.
+    tests_dir = discover_test_dirs(root, tests)
     counts = {"HIGH": 0, "MEDIUM": 0, "INFO": 0}
     prod, test_files = _py_files(root, tests_dir)
+    where = ", ".join(str(_rel(root, d)) for d in tests_dir)
     pre_out: list[str] = [
         f"scanned root: {root} ({len(prod)} prod files, {len(test_files)} test files)",
+        f"test paths: {where}",
         "",
     ]
     pre_findings: list[Finding] = []
@@ -1074,7 +1095,7 @@ def run(
     strict_mypy: bool = False,
     mutation: bool = False,
     strict: bool = True,
-    tests: str = "tests",
+    tests: str | None = None,
     pytest_extra: str = "-p no:logfire",
     fix: bool = False,
     shared_cov: Path | None = None,
@@ -1094,7 +1115,7 @@ def run(
         stdout_lines: list[str] = []
         force_utf8_streams()
         root = target_root.resolve()
-        tests_dir = (root / tests).resolve()
+        tests_dir = discover_test_dirs(root, tests)
         counts = {"HIGH": 0, "MEDIUM": 0, "INFO": 0}
         prod, test_files = _py_files(root, tests_dir)
         stdout_lines.append(
@@ -1138,7 +1159,7 @@ def run(
 if __name__ == "__main__":
     ap = _argparse.ArgumentParser()
     ap.add_argument("--path", default=None, help="repo root")
-    ap.add_argument("--tests", default="tests")
+    ap.add_argument("--tests", default=None)
     ap.add_argument("--fast", action="store_true")
     ap.add_argument("--strict-mypy", action="store_true")
     ap.add_argument("--mutation", action="store_true")

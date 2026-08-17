@@ -52,9 +52,18 @@ from pathlib import Path
 
 from audit_code.audit_config import FULL_SUITE_TIMEOUT, MAX_SOLO_RERUNS, SOLO_TIMEOUT
 from audit_code.audit_shared import force_utf8_streams
+from audit_code.testpaths import pytest_targets
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+# Last-resort guess. _targets() below asks the project's pytest config first.
 TESTS_DIR = "tests"
+
+
+def _targets(root: Path | None = None) -> list[str]:
+    """Paths to hand pytest, from the project's own `testpaths` when declared."""
+    return pytest_targets(root or ROOT)
+
+
 PYTEST_ARGS = ["-q", "--tb=no", "-p", "no:logfire", "-p", "no:deepeval"]
 
 VERDICT_RE = re.compile(r"(\d+) passed|(\d+) failed|no tests ran", re.MULTILINE)
@@ -80,10 +89,11 @@ ENV_SKIP_RE = re.compile(
 )
 
 
-def _run_pytest(target: str, cwd: Path, timeout: int) -> tuple[str, int]:
+def _run_pytest(target, cwd: Path, timeout: int) -> tuple[str, int]:
     """Run pytest on target; return (combined output, returncode)."""
+    targets = [target] if isinstance(target, str) else list(target)
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", target, *PYTEST_ARGS],
+        [sys.executable, "-m", "pytest", *targets, *PYTEST_ARGS],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -149,7 +159,7 @@ def _baseline_failures() -> set | None:
         if add.returncode != 0:
             print(f"  [baseline] worktree failed: {add.stderr.strip()[:200]}")
             return None
-        out, rc = _run_pytest(TESTS_DIR, wt, FULL_SUITE_TIMEOUT)
+        out, rc = _run_pytest(_targets(wt), wt, FULL_SUITE_TIMEOUT)
         return {nid for _, nid in _parse(out, rc)["failures"]}
     except subprocess.TimeoutExpired:
         print("  [baseline] HEAD suite timed out")
@@ -227,12 +237,13 @@ def main():
     fast = "--fast" in sys.argv
     baseline = "--baseline" in sys.argv
 
+    targets = _targets()
     print(
-        f"running: pytest {TESTS_DIR} {' '.join(PYTEST_ARGS)}  "
+        f"running: pytest {' '.join(targets)} {' '.join(PYTEST_ARGS)}  "
         f"(timeout {FULL_SUITE_TIMEOUT}s)"
     )
     try:
-        out, rc = _run_pytest(TESTS_DIR, ROOT, FULL_SUITE_TIMEOUT)
+        out, rc = _run_pytest(targets, ROOT, FULL_SUITE_TIMEOUT)
     except subprocess.TimeoutExpired:
         print("=" * 74)
         print("S2 [HIGH] suite verdict missing - 1 finding(s)")

@@ -164,3 +164,66 @@ def test_scan_empty_directory(tmp_path):
     failures, checked = encoding_check.scan(tmp_path, "utf-8")
     assert failures == []
     assert checked >= 0
+
+
+# ── binary detection: magic bytes / extension, not just NUL (regression) ──────
+
+# A real 2 KB PDF starts like this and contains NO NUL byte in its first 4 KB,
+# so the old NUL-only heuristic strict-decoded it and reported a false FAIL.
+_PDF_HEAD = b"%PDF-1.3\n%\xe9\xeb\xf1\xbf\n1 0 obj\n<< /Type /Catalog >>\n"
+
+_NUL_FREE_BINARIES = {
+    "doc.pdf": _PDF_HEAD,
+    "img.png": b"\x89PNG\r\n\x1a\n\xff\xfe\xfd\xfc",
+    "photo.jpg": b"\xff\xd8\xff\xe0\x00\x10JFIF\xff\xfe",
+    "anim.gif": b"GIF89a\xff\xfe\xfd",
+    "old.gif": b"GIF87a\xff\xfe\xfd",
+    "book.xlsx": b"PK\x03\x04\xff\xfe\xfd",
+    "text.docx": b"PK\x03\x04\x14\xff\xfe",
+    "deck.pptx": b"PK\x03\x04\x0a\xff\xfe",
+    "lib.jar": b"PK\x03\x04\xff\xfe",
+}
+
+
+@pytest.mark.parametrize("name,head", sorted(_NUL_FREE_BINARIES.items()))
+def test_looks_binary_recognizes_magic_without_nul(name, head):
+    """Magic bytes classify these as binary even though no NUL is present."""
+    assert b"\x00" not in head[:4096] or name in ("img.png", "photo.jpg")
+    assert encoding_check._binary_by_magic(head) is True
+    assert encoding_check._looks_binary(head, __import__("pathlib").Path(name)) is True
+
+
+def test_scan_skips_nul_free_binaries_but_still_flags_bad_text(tmp_path):
+    """The exact false-FAIL class: binary containers exempt, broken text caught."""
+    for name, head in _NUL_FREE_BINARIES.items():
+        (tmp_path / name).write_bytes(head)
+    (tmp_path / "broken.py").write_bytes("# caf\xe9\nx = 1\n".encode("latin-1"))
+    (tmp_path / "fine.py").write_bytes("# caf\xe9\nx = 1\n".encode("utf-8"))
+
+    failures, checked = encoding_check.scan(tmp_path, "utf-8")
+    assert {p.name for p, _, _ in failures} == {"broken.py"}
+    assert checked == 2  # only the two .py files are text
+
+
+def test_binary_by_extension_covers_stripped_magic(tmp_path):
+    """Extension is an independent signal — a truncated/odd header still skips."""
+    p = tmp_path / "weird.xlsx"
+    p.write_bytes(b"\xff\xfe not really a zip header")
+    assert encoding_check._binary_by_extension(p) is True
+    failures, checked = encoding_check.scan(tmp_path, "utf-8")
+    assert failures == [] and checked == 0
+
+
+def test_nul_heuristic_still_applies_to_unknown_extension(tmp_path):
+    """The original NUL rule is kept, not replaced."""
+    (tmp_path / "blob.unknownext").write_bytes(b"abc\x00def")
+    failures, checked = encoding_check.scan(tmp_path, "utf-8")
+    assert failures == [] and checked == 0
+
+
+def test_run_passes_on_a_pdf_that_used_to_fail(tmp_path):
+    """End-to-end: a PDF alongside clean source is a PASS, not a HIGH."""
+    (tmp_path / "rcp_0024.pdf").write_bytes(_PDF_HEAD)
+    (tmp_path / "a.py").write_bytes(b"x = 1\n")
+    result = encoding_check.run(tmp_path, "utf-8")
+    assert not result.is_failure and result.high == 0
