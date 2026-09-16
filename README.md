@@ -6,12 +6,10 @@ Polyglot code auditor — syntax, wiring, PHD static analysis, runtime checks,
 test suite health, quality gates, deep tree-sitter AST rules, and 23 native
 linters across 21 languages. All in one shot. Zero config needed.
 
-<p align="center">
-  <a href="#install"><img src="https://img.shields.io/badge/%F0%9F%9B%A0%EF%B8%8F-Install-f7a800" alt="Install"></a>
-  <a href="#usage"><img src="https://img.shields.io/badge/%F0%9F%93%90-Usage-7dd3a8" alt="Usage"></a>
-  <a href="#the-stack"><img src="https://img.shields.io/badge/%E2%9A%99%EF%B8%8F-How_It_Works-7ab3ff" alt="How It Works"></a>
-  <a href="#license"><img src="https://img.shields.io/badge/%F0%9F%93%9C-CC_BY--NC--ND_4.0-d4d4d4" alt="License"></a>
-</p>
+[![Install](https://img.shields.io/badge/%F0%9F%9B%A0%EF%B8%8F-Install-f7a800)](#install)
+[![Usage](https://img.shields.io/badge/%F0%9F%93%90-Usage-7dd3a8)](#usage)
+[![How It Works](https://img.shields.io/badge/%E2%9A%99%EF%B8%8F-How_It_Works-7ab3ff)](#the-stack)
+[![License](https://img.shields.io/badge/%F0%9F%93%9C-CC_BY--NC--ND_4.0-d4d4d4)](#license)
 
 
 ## Install
