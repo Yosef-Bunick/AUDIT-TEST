@@ -42,6 +42,43 @@ cd AUDIT-TEST
 pip install -e .          # or  pip install -e ".[all]"
 ```
 
+### Windows: `audit-test` not recognized
+
+pip installs the console scripts into Python's user *Scripts* directory, which
+Windows does not put on `PATH` by default. The package is installed fine — the
+shell just can't see the launcher.
+
+**The reliable way — no `PATH` change, works under group policy:**
+
+```powershell
+python -m audit_test          # same as `python -m audit_code`
+```
+
+Prefer this on managed/corporate machines. AppLocker policies commonly block
+running `.exe` files out of `%APPDATA%`, so `audit-test.exe` can fail with
+*"This program is blocked by group policy"* even once `PATH` is correct. Going
+through `python -m` sidesteps that entirely, because the executable being run
+is `python.exe` from its normal allow-listed location.
+
+**Or put the Scripts directory on `PATH`** (persists for your user, and
+refreshes the current session — no reboot):
+
+```powershell
+$scripts = python -c "import sysconfig; print(sysconfig.get_path('scripts','nt_user'))"
+$user = [Environment]::GetEnvironmentVariable('Path','User')
+if ($user -notlike "*$scripts*") {
+    [Environment]::SetEnvironmentVariable('Path', "$user;$scripts", 'User')
+}
+$env:Path = "$env:Path;$scripts"
+```
+
+Asking Python for the path beats hardcoding one: the directory carries the
+interpreter version (`…\Python312\Scripts`), so a pasted literal path breaks on
+every other Python. The `-notlike` guard keeps repeat runs from appending
+duplicates. If you installed into a virtualenv or system-wide rather than with
+`pip install --user`, drop the `'nt_user'` argument — plain
+`sysconfig.get_path('scripts')` gives that environment's Scripts directory.
+
 ## Usage
 
 Three commands — all identical:
