@@ -779,6 +779,13 @@ def _is_graph_mode() -> bool:
     return False
 
 
+def _is_callgraph_mode() -> bool:
+    for a in sys.argv[1:]:
+        if not a.startswith("-"):
+            return a == "callgraph"
+    return False
+
+
 def _is_deadcode_mode() -> bool:
     for a in sys.argv[1:]:
         if not a.startswith("-"):
@@ -1193,6 +1200,14 @@ def _handle_graph() -> None:  # audit: ok (CLI entry point)
     sys.exit(EXIT_PASS if result.status == AuditStatus.PASS else 2)
 
 
+def _handle_callgraph() -> None:  # audit: ok (CLI entry point)
+    """`callgraph [--callers X | --callees X | --from-traceback F ...]`."""
+    from audit_code.callgraph import main as callgraph_main
+
+    idx = sys.argv.index("callgraph")
+    sys.exit(callgraph_main(sys.argv[idx + 1 :]))
+
+
 # ── bottleneck command ───────────────────────────────────────────────────────
 
 
@@ -1452,6 +1467,8 @@ def main():
         _handle_scan()
     elif _is_graph_mode():
         _handle_graph()
+    elif _is_callgraph_mode():
+        _handle_callgraph()
     elif _is_bottleneck_mode():
         _handle_bottleneck()
     elif _is_fix_mode():

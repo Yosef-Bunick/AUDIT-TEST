@@ -366,6 +366,31 @@ Same 10 languages (Python via `ast`, the rest via the installed tree-sitter
 grammars). Edges are name-based within one file: `obj.method()` reduces to
 `method`, so cross-file calls and dynamic dispatch aren't resolved.
 
+### Cross-file call graph
+
+`callgraph` builds a function-level graph over a whole Python project — one
+node per module, class, function and method — and labels every edge with how
+it was resolved: **L1** imports (aliases, relative imports, `__init__`
+re-exports), **L2** the class system (`self`/`cls`/`super()`, inherited
+methods, `X()` → `__init__`, typed instances), **L3** name-based guesses for
+`obj.m()` with an unknown type (opt-in, `--guess`). Standard library only.
+
+```powershell
+audit-test callgraph                              # summary: nodes, edges by level, unresolved calls
+audit-test callgraph --callers Engine.step        # who calls it (depth 3; --depth N)
+audit-test callgraph --callees pkg/core.py:120    # what the def spanning that line calls
+audit-test callgraph --subgraph a.f,b.g,C.m       # these nodes + edges between them
+audit-test callgraph --rank                       # top nodes by PageRank
+audit-test callgraph --from-traceback tb.txt --issue issue.txt   # ranked suspects
+audit-test callgraph --from-symbols parse,Engine.step            # same, no traceback
+audit-test callgraph --json                       # node-link JSON (nodes carry file/lines/text)
+```
+
+Localization walks back from the crash through callers and scores each
+candidate by distance, being on the stack, PageRank and name overlap with the
+issue text. Weights, depth and stopwords live in `[callgraph]` in
+`audit-code.toml`.
+
 ### Bottleneck finder
 
 Find performance bottlenecks two ways — a static async scan plus an optional
