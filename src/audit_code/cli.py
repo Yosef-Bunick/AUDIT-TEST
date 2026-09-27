@@ -1202,10 +1202,11 @@ def _handle_graph() -> None:  # audit: ok (CLI entry point)
 
 def _handle_callgraph() -> None:  # audit: ok (CLI entry point)
     """`callgraph [--callers X | --callees X | --from-traceback F ...]`."""
+    from audit_code.callgraph import exit_fast
     from audit_code.callgraph import main as callgraph_main
 
     idx = sys.argv.index("callgraph")
-    sys.exit(callgraph_main(sys.argv[idx + 1 :]))
+    exit_fast(callgraph_main(sys.argv[idx + 1 :]))
 
 
 # ── bottleneck command ───────────────────────────────────────────────────────

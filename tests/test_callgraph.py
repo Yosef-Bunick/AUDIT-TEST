@@ -1,12 +1,15 @@
 """In-process tests for callgraph — cross-file function call graph. T1 anchor."""
 
 import json
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 from audit_code.callgraph import (
     CallGraph,
     feeders,
+    issue_seeds,
     localize,
     load_config,
     main,
@@ -247,3 +250,89 @@ def test_assertion_in_test_walks_into_code_under_test():
         res = localize(g, load_config(root), frames=parse_traceback(tb))
         ids = {c["id"] for c in res["top"]}
         assert {"invoice.total", "money.to_money", "money.tax"} <= ids
+
+
+def test_internal_fault_skips_one_unit_not_the_build(monkeypatch):
+    with tempfile.TemporaryDirectory() as d:
+        root = _repo(d)
+        real_walk = CallGraph._walk
+
+        def faulty(self, caller, body, scope):
+            if caller == "pkg.core.Engine.step":
+                raise KeyError("unexpected node")
+            return real_walk(self, caller, body, scope)
+
+        monkeypatch.setattr(CallGraph, "_walk", faulty)
+        g = CallGraph(root).build()
+        faults = [r for f, r in g.skipped if f == "pkg/core.py"]
+        assert (
+            faults and "internal error in pkg.core.Engine.step: KeyError" in faults[0]
+        )
+        # every other body still linked
+        assert ("app.main", "pkg.util.helper", "calls") in g.edges
+        assert not any(k[0] == "pkg.core.Engine.step" for k in g.edges)
+
+
+def test_default_values_belong_to_the_function():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "auth.py").write_text(
+            "def require_auth():\n    return 1\n", encoding="utf-8"
+        )
+        (root / "api.py").write_text(
+            "from auth import require_auth\n\n"
+            "def Depends(dep):\n    return dep\n\n"
+            "def endpoint(user=Depends(require_auth)):\n    return user\n",
+            encoding="utf-8",
+        )
+        g = CallGraph(root).build()
+        assert ("api.endpoint", "auth.require_auth", "references") in g.edges
+        assert ("api.endpoint", "api.Depends", "calls") in g.edges
+        assert ("api", "auth.require_auth", "references") not in g.edges
+
+
+def test_pytest_report_format():
+    report = (
+        "_____________ test_total _____________\n\n"
+        "    def test_total():\n>       assert total([1]) == 1\n\n"
+        "tests\\test_invoice.py:4: \n"
+        "_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\n"
+        "    def total(lines):\n"
+        "E   TypeError: boom\n\n"
+        "invoice.py:7: TypeError\n"
+        "WARNING  auth:auth.py:36 not a frame\n"
+        "FAILED tests/test_invoice.py::test_total - TypeError: boom\n"
+    )
+    assert parse_traceback(report) == [
+        ("tests\\test_invoice.py", 4, ""),
+        ("invoice.py", 7, ""),
+    ]
+    short = "app/x.py:12: in outer\n    y()\napp/y.py:3: in inner\nE   ValueError\n"
+    assert parse_traceback(short) == [
+        ("app/x.py", 12, "outer"),
+        ("app/y.py", 3, "inner"),
+    ]
+
+
+def test_issue_text_alone_finds_partial_name_matches():
+    with tempfile.TemporaryDirectory() as d:
+        root = _feed_repo(d)
+        g = CallGraph(root).build()
+        seeds = issue_seeds(g, "the money total is wrong", frozenset(), 5)
+        assert set(seeds[:2]) == {"invoice.total", "money.to_money"}
+        assert "test_invoice.test_total" not in seeds
+
+
+def test_process_exit_flushes_output_and_keeps_exit_code():
+    with tempfile.TemporaryDirectory() as d:
+        root = _repo(d)
+        cmd = [sys.executable, "-m", "audit_code.callgraph", "--path", str(root)]
+        ok = subprocess.run(
+            cmd + ["--json", "--no-text"], capture_output=True, text=True, check=False
+        )
+        assert ok.returncode == 0
+        assert len(json.loads(ok.stdout)["nodes"]) > 10  # fully flushed
+        bad = subprocess.run(
+            cmd + ["--callers", "nope"], capture_output=True, text=True, check=False
+        )
+        assert bad.returncode == 2 and "no node matches" in bad.stderr

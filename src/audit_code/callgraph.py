@@ -17,7 +17,9 @@ localization live here too so the whole tool runs as one script.
 import argparse
 import ast
 import builtins
+import gc
 import json
+import os
 import re
 import sys
 from collections import deque
@@ -45,6 +47,7 @@ DEFAULTS: dict = {
     "w_name": 0.8,
     "w_feed": 1.5,
     "feed_hops": 3,
+    "issue_seeds": 10,
     "test_penalty": 1.0,
     "stopwords": [
         "the", "and", "for", "with", "from", "this", "that", "not", "none",
@@ -75,6 +78,11 @@ _LITERALS = {
 _FRAME_RE = re.compile(
     r'^\s*File "(?P<file>[^"]+)", line (?P<line>\d+), in (?P<func>\S+)'
 )
+# pytest report frames: `tests\x.py:66: ` / `app/x.py:120: TypeError` / `x.py:9: in f`
+_PYTEST_FRAME_RE = re.compile(
+    r"^(?P<file>(?:[A-Za-z]:)?[^\s:\"<>|]+\.py):(?P<line>\d+):(?:\s+in\s+(?P<func>\S+))?"
+)
+_PYTEST_SECTION_RE = re.compile(r"^_{3,} .+ _{3,}$", re.MULTILINE)
 _WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _CAMEL_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
 
@@ -251,21 +259,48 @@ class CallGraph:
     # ── build ──
 
     def build(self) -> "CallGraph":
+        # Parsing allocates millions of AST nodes that all stay alive; the
+        # cyclic GC would rescan them repeatedly for nothing (~3x build time).
+        was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            self._build()
+        finally:
+            if was_enabled:
+                gc.enable()
+        return self
+
+    def _build(self) -> None:
         self._load_modules()
         for m in list({id(m): m for m in self.mods.values()}.values()):
-            self._index_module(m)
-        for cid in self.classes:
-            for b in self._bases(cid):
-                self._edge(cid, b, "inherits", self.nodes[cid].line, 1)
+            self._guarded(m.rel, m.name, self._index_module, m)
+        for cid in list(self.classes):
+            self._guarded(self.nodes[cid].mod.rel, cid, self._inherits, cid)
         for owner, body, scope in self._jobs:
-            try:
-                self._walk(owner, body, scope)
-            except RecursionError:
-                self.skipped.append(
-                    (self.nodes[owner].mod.rel, f"too deeply nested in {owner}")
-                )
+            self._guarded(
+                self.nodes[owner].mod.rel, owner, self._walk, owner, body, scope
+            )
         self._jobs = []
-        return self
+
+    def _guarded(self, rel: str, where: str, fn, *args) -> None:
+        """Run one unit of work (a module, class or body); a failure skips it.
+
+        A resolution fault — pathological AST, cyclic hierarchy, a node the
+        linker did not expect — must cost one unit, not the whole graph. It
+        is reported in ``skipped`` with its location, never swallowed.
+        """
+        try:
+            fn(*args)
+        except RecursionError:
+            self.skipped.append((rel, f"too deeply nested in {where}"))
+        except Exception as e:  # audit: ok (isolate one unit; reported in skipped)
+            self.skipped.append(
+                (rel, f"internal error in {where}: {type(e).__name__}: {e}")
+            )
+
+    def _inherits(self, cid: str) -> None:
+        for b in self._bases(cid):
+            self._edge(cid, b, "inherits", self.nodes[cid].line, 1)
 
     def _load_modules(self) -> None:
         enc = configured_encoding(self.root)
@@ -803,8 +838,11 @@ class CallGraph:
                 self._on_decorators(scope, n)
                 stack.extend((x, False) for x in n.decorator_list)
                 if t is not ast.ClassDef:
-                    stack.extend((x, True) for x in n.args.defaults)
-                    stack.extend((x, True) for x in n.args.kw_defaults if x is not None)
+                    # Defaults resolve in this scope but belong to the def:
+                    # `auth=Depends(require_auth)` is the endpoint's dependency.
+                    a = n.args
+                    dflts = a.defaults + [x for x in a.kw_defaults if x is not None]
+                    self._walk(self._ast_ids.get(id(n), caller), dflts, scope)
             elif t is ast.Lambda:
                 stack.append((n.body, True))
                 stack.extend((x, True) for x in n.args.defaults)
@@ -1069,7 +1107,12 @@ def tokens(text: str, stop: frozenset[str]) -> set[str]:
 
 
 def parse_traceback(text: str) -> list[tuple[str, int, str]]:
-    """(file, line, func) frames of the last traceback in *text*, outermost first."""
+    """(file, line, func) frames of the last traceback in *text*, outermost first.
+
+    Reads Python tracebacks (`File "x.py", line N, in f`) and, failing that,
+    pytest's own report format (`x.py:N: in f` / `x.py:N: Error`), where the
+    function name may be absent — frames then map by line alone.
+    """
     blocks = text.split("Traceback (most recent call last):")
     for block in reversed(blocks[1:] if len(blocks) > 1 else blocks):
         frames = []
@@ -1079,7 +1122,42 @@ def parse_traceback(text: str) -> list[tuple[str, int, str]]:
                 frames.append((m.group("file"), int(m.group("line")), m.group("func")))
         if frames:
             return frames
+    for section in reversed(_PYTEST_SECTION_RE.split(text)):
+        frames = []
+        for ln in section.splitlines():
+            m = _PYTEST_FRAME_RE.match(ln)
+            if m:
+                frames.append(
+                    (m.group("file"), int(m.group("line")), m.group("func") or "")
+                )
+        if frames:
+            return frames
     return []
+
+
+def issue_seeds(g: CallGraph, issue: str, stop: frozenset[str], cap: int) -> list[str]:
+    """Starting points named by the issue text alone.
+
+    Exact identifier mentions first; then non-test functions whose name
+    pieces the issue shares (`base_currency` for "home currency"), best
+    overlap first, PageRank breaking ties, capped at *cap*.
+    """
+    words = {
+        w for w in _WORD_RE.findall(issue) if len(w) >= 4 and w.lower() not in stop
+    }
+    exact = [n.id for n in g.nodes.values() if n.kind != "module" and n.name in words]
+    issue_toks = tokens(issue, stop)
+    pr = g.pagerank()
+    fuzzy = []
+    for n in g.nodes.values():
+        if n.kind == "module" or n.id in exact or is_test(Path(n.mod.rel)):
+            continue
+        toks = tokens(n.name, stop)
+        shared = len(toks & issue_toks)
+        if shared and shared / len(toks) >= 0.5:
+            fuzzy.append((-shared / len(toks), -shared, -pr.get(n.id, 0.0), n.id))
+    fuzzy.sort()
+    return (exact + [f[-1] for f in fuzzy])[: max(cap, len(exact))]
 
 
 def _frame_node(g: CallGraph, file: str, line: int, func: str) -> str | None:
@@ -1190,13 +1268,8 @@ def localize(
     sym_seeds = []
     for s in symbols or []:
         sym_seeds.extend(g.find(s))
-    if not seeds and not sym_seeds and issue:  # names the issue text mentions
-        words = {
-            w for w in _WORD_RE.findall(issue) if len(w) >= 4 and w.lower() not in stop
-        }
-        sym_seeds = [
-            n.id for n in g.nodes.values() if n.kind != "module" and n.name in words
-        ]
+    if not seeds and not sym_seeds and issue:
+        sym_seeds = issue_seeds(g, issue, stop, int(cfg["issue_seeds"]))
     for s in sym_seeds:
         seeds[s] = 0
     # The crash site's inputs: callees whose results reach the crashing line.
@@ -1472,5 +1545,18 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def exit_fast(code: int) -> None:
+    """End a CLI process without tearing down the parsed ASTs.
+
+    A build leaves millions of AST nodes alive in the shared parse cache;
+    freeing them one by one at interpreter exit costs about as long as the
+    build itself. Flush, then let the OS reclaim the memory (as mypy does).
+    Only for process entry points — never call this from in-process code.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    exit_fast(main())

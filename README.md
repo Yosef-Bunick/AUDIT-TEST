@@ -383,13 +383,22 @@ audit-test callgraph --subgraph a.f,b.g,C.m       # these nodes + edges between 
 audit-test callgraph --rank                       # top nodes by PageRank
 audit-test callgraph --from-traceback tb.txt --issue issue.txt   # ranked suspects
 audit-test callgraph --from-symbols parse,Engine.step            # same, no traceback
+audit-test callgraph --issue issue.txt            # same, starting from names the issue mentions
 audit-test callgraph --json                       # node-link JSON (nodes carry file/lines/text)
 ```
 
-Localization walks back from the crash through callers and scores each
-candidate by distance, being on the stack, PageRank and name overlap with the
-issue text. Weights, depth and stopwords live in `[callgraph]` in
-`audit-code.toml`.
+`--from-traceback` reads a Python traceback or pytest's own failure report
+(saved output of a failing `pytest` run works as-is). Localization walks both
+ways from every frame — up to callers, down to callees — and flags the
+functions whose return values flowed into the crashing line (`feeds-crash`):
+the usual culprit has already returned, so it is not on the stack. Candidates
+are scored by distance, being on the stack, feeding the crash, PageRank and
+name overlap with the issue text; test helpers off the stack are pushed down.
+Weights, depth and stopwords live in `[callgraph]` in `audit-code.toml`.
+
+A file that fails to parse, or any unit (module, class, function body) that
+trips an internal resolution fault, is skipped and listed in the summary with
+its reason — the rest of the graph is still built.
 
 ### Bottleneck finder
 
