@@ -6,6 +6,7 @@ from pathlib import Path
 
 from audit_code.callgraph import (
     CallGraph,
+    feeders,
     localize,
     load_config,
     main,
@@ -163,7 +164,8 @@ def test_traceback_localization():
             g, load_config(root), frames=frames, issue="the spin value broke"
         )
         ids = [c["id"] for c in res["top"]]
-        assert ids[0] == "pkg.core.Engine.step"
+        # crash frame, and the call on its crash line that the issue names
+        assert set(ids[:2]) == {"pkg.core.Engine.step", "pkg.core.Part.spin"}
         assert "app.main" in ids
         assert res["frames"][2]["node"] is None  # library frame
 
@@ -189,3 +191,59 @@ def test_cli_json(capsys):
         data = json.loads(capsys.readouterr().out)
         assert {"app.main", "pkg.util.other"} <= {n["id"] for n in data["nodes"]}
         assert main(["--path", str(root), "--callers", "nope"]) == 2
+
+
+FEED = {
+    "money.py": "def to_money(x):\n    return float(x)\n\ndef tax(x):\n    return x\n",
+    "invoice.py": (
+        "from money import to_money, tax\n\n"
+        "def total(lines):\n"
+        "    subtotal = 0\n"
+        "    for ln in lines:\n"
+        "        amount = to_money(ln)\n"
+        "        subtotal += amount\n"
+        "    return tax(subtotal)\n"
+    ),
+    "test_invoice.py": (
+        "from invoice import total\n\ndef test_total():\n    assert total([1]) == 1\n"
+    ),
+}
+
+
+def _feed_repo(d: str) -> Path:
+    root = Path(d)
+    for rel, text in FEED.items():
+        (root / rel).write_text(text, encoding="utf-8")
+    return root
+
+
+def _tb(*frames: tuple[Path, int, str], exc: str) -> str:
+    lines = ["Traceback (most recent call last):"]
+    lines += [f'  File "{p}", line {ln}, in {fn}' for p, ln, fn in frames]
+    return "\n".join(lines + [exc]) + "\n"
+
+
+def test_feeders_follow_values_into_the_crash_line():
+    with tempfile.TemporaryDirectory() as d:
+        root = _feed_repo(d)
+        g = CallGraph(root).build()
+        # line 7 `subtotal += amount` reads `amount`, assigned from to_money()
+        assert feeders(g, "invoice.total", 7) == {"money.to_money": 1}
+        tb = _tb(
+            (root / "test_invoice.py", 4, "test_total"),
+            (root / "invoice.py", 7, "total"),
+            exc="TypeError: boom",
+        )
+        res = localize(g, load_config(root), frames=parse_traceback(tb))
+        assert [c["id"] for c in res["top"][:2]] == ["invoice.total", "money.to_money"]
+        assert res["top"][1]["feeds_crash"] == 1
+
+
+def test_assertion_in_test_walks_into_code_under_test():
+    with tempfile.TemporaryDirectory() as d:
+        root = _feed_repo(d)
+        g = CallGraph(root).build()
+        tb = _tb((root / "test_invoice.py", 4, "test_total"), exc="AssertionError")
+        res = localize(g, load_config(root), frames=parse_traceback(tb))
+        ids = {c["id"] for c in res["top"]}
+        assert {"invoice.total", "money.to_money", "money.tax"} <= ids

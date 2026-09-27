@@ -43,7 +43,9 @@ DEFAULTS: dict = {
     "w_stack": 0.5,
     "w_rank": 0.3,
     "w_name": 0.8,
-    "test_penalty": 0.5,
+    "w_feed": 1.5,
+    "feed_hops": 3,
+    "test_penalty": 1.0,
     "stopwords": [
         "the", "and", "for", "with", "from", "this", "that", "not", "none",
         "true", "false", "return", "self", "cls", "def", "class", "when",
@@ -1091,6 +1093,80 @@ def _frame_node(g: CallGraph, file: str, line: int, func: str) -> str | None:
     return named[0] if len(named) == 1 else hit  # line drift: trust a unique name
 
 
+def _def_ast(g: CallGraph, nid: str):
+    """The FunctionDef node for a function/method node (cached parse)."""
+    n = g.nodes[nid]
+    tree, _err = parse_text(g.root / n.mod.rel, n.mod.text)
+    for d in ast.walk(tree) if tree is not None else ():
+        if isinstance(d, (ast.FunctionDef, ast.AsyncFunctionDef)) and d.name == n.name:
+            start = min([d.lineno] + [x.lineno for x in d.decorator_list])
+            if start == n.line:
+                return d
+    return None
+
+
+def _own_nodes(fn):
+    """Nodes of one function body, not descending into nested defs/lambdas."""
+    stack = list(fn.body)
+    while stack:
+        x = stack.pop()
+        yield x
+        if not isinstance(x, _DEF_T) and type(x) is not ast.Lambda:
+            stack.extend(ast.iter_child_nodes(x))
+
+
+def feeders(g: CallGraph, nid: str, line: int, hops: int = 3) -> dict[str, int]:
+    """Callees whose results flow into *line* of function *nid*.
+
+    Hop 0: calls made on the line itself. Hop k: calls in the latest
+    assignment (at or before the line) to a name read by a hop k-1 line —
+    the functions that produced the values the crashing line consumed.
+    """
+    fn = _def_ast(g, nid) if g.nodes[nid].kind in ("function", "method") else None
+    if fn is None:
+        return {}
+    loads: dict[int, set[str]] = {}
+    binds: dict[str, list[tuple[int, int]]] = {}
+    for x in _own_nodes(fn):
+        t = type(x)
+        if t is ast.Name and type(x.ctx) is ast.Load:
+            loads.setdefault(x.lineno, set()).add(x.id)
+        elif t in (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.For, ast.AsyncFor):
+            tgts = x.targets if t is ast.Assign else [x.target]
+            names: list[str] = []
+            for tg in tgts:
+                _target_names(tg, names)
+            end = (
+                x.lineno if t in (ast.For, ast.AsyncFor) else (x.end_lineno or x.lineno)
+            )
+            for nm in names:
+                binds.setdefault(nm, []).append((x.lineno, end))
+    hop_of: dict[int, int] = {line: 0}
+    frontier = {line}
+    for hop in range(1, hops + 1):
+        nxt: set[int] = set()
+        names = set().union(*(loads.get(ln, set()) for ln in frontier))
+        for nm in names:
+            spans = [sp for sp in binds.get(nm, ()) if sp[0] <= line]
+            if not spans:
+                continue
+            a, b = max(spans)
+            for ln in range(a, b + 1):
+                if ln not in hop_of:
+                    hop_of[ln] = hop
+                    nxt.add(ln)
+        if not nxt:
+            break
+        frontier = nxt
+    out: dict[str, int] = {}
+    for (s, t, ty), e in g.edges.items():
+        if s == nid and ty in ("calls", "instantiates") and t != nid:
+            hops_hit = [hop_of[ln] for ln in e[2] if ln in hop_of]
+            if hops_hit:
+                out[t] = min(hops_hit)
+    return out
+
+
 def localize(
     g: CallGraph,
     cfg: dict,
@@ -1123,12 +1199,19 @@ def localize(
         ]
     for s in sym_seeds:
         seeds[s] = 0
-    # Multi-source BFS: callers from every seed; callees too for symbol seeds
-    # (wrong-output bugs often sit just below the named function).
+    # The crash site's inputs: callees whose results reach the crashing line.
+    feed: dict[str, int] = {}
+    crash = next((f for f in reversed(mapped) if f["node"] in on_stack), None)
+    if crash is not None:
+        feed = feeders(g, crash["node"], crash["line"], int(cfg["feed_hops"]))
+    # Multi-source BFS both ways from every seed: callers, and callees — a
+    # frame that received a bad value (or a test asserting on one) points at
+    # code it called, which has already returned and so is not on the stack.
     dist = dict(seeds)
+    for f in feed:
+        dist[f] = min(dist.get(f, 1), 1)
     for s, d0 in seeds.items():
-        dirs = ("in",) if s in on_stack else ("in", "out")
-        for direction in dirs:
+        for direction in ("in", "out"):
             for n, d in g.walk(s, direction, depth).items():
                 if d + d0 < dist.get(n, 1 << 30):
                     dist[n] = d + d0
@@ -1151,7 +1234,8 @@ def localize(
             + cfg["w_stack"] * (nid in on_stack)
             + cfg["w_rank"] * pr.get(nid, 0.0) / pr_max
             + cfg["w_name"] * overlap
-            - cfg["test_penalty"] * is_test(Path(n.mod.rel))
+            + (cfg["w_feed"] / (1 + feed[nid]) if nid in feed else 0.0)
+            - cfg["test_penalty"] * (is_test(Path(n.mod.rel)) and nid not in on_stack)
         )
         scored.append((score, nid, d, overlap))
     scored.sort(key=lambda x: (-x[0], x[2], x[1]))
@@ -1164,6 +1248,7 @@ def localize(
                 "rank": i + 1, "id": nid, "score": round(sc, 4),
                 "file": g.nodes[nid].mod.rel, "line": g.nodes[nid].line,
                 "dist": d, "on_stack": nid in on_stack, "name_overlap": round(ov, 3),
+                "feeds_crash": feed.get(nid),
             }  # fmt: skip
             for i, (sc, nid, d, ov) in enumerate(scored[:top])
         ],
@@ -1361,6 +1446,11 @@ def main(argv: list[str] | None = None) -> int:
         for c in res["top"]:
             why = f"d={c['dist']}" + (" stack" if c["on_stack"] else "")
             why += f" name={c['name_overlap']}" if c["name_overlap"] else ""
+            why += (
+                f" feeds-crash(hop {c['feeds_crash']})"
+                if c["feeds_crash"] is not None
+                else ""
+            )
             print(
                 f"{c['rank']:>3}  {c['score']:.3f}  {c['id']}  ({c['file']}:{c['line']})  {why}"
             )
