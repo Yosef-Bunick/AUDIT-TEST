@@ -31,15 +31,15 @@ from audit_code.config import (
     MIN_FLAG_BODY_LINES,
     TOOL_TIMEOUT,
 )  # noqa: E402
+from audit_code.manifests import (
+    declared_dependencies,
+    manifest_sources,
+)
 from audit_code.models import (
     AuditResult,
     AuditStatus,
     Finding,
     Severity,
-)
-from audit_code.manifests import (
-    declared_dependencies,
-    manifest_sources,
 )
 from audit_code.testpaths import discover_test_dirs
 
