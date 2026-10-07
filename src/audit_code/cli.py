@@ -84,7 +84,7 @@ def _is_gate_mode() -> bool:
 def build_audit_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="audit-test",
-        description="Code and test verification orchestrator.",
+        description="Polyglot code auditor: code quality and whether your tests actually catch bugs.",
         add_help=False,
     )
     parser.add_argument(

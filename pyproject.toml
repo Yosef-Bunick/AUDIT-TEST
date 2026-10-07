@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "audit-test"
 version = "1.0.3"
-description = "Code and test verification orchestrator — interrogates code quality AND whether tests genuinely prove correctness"
+description = "Polyglot code auditor that checks code quality and whether your tests actually catch bugs — wiring, static analysis, test-suite health, execution coverage and mutation gates across 21 languages, in one fail-closed verdict"
 requires-python = ">=3.10"
 license = {text = "CC BY-NC-ND 4.0"}
 readme = "README.md"
