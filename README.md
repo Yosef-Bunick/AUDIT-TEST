@@ -101,6 +101,17 @@ audit-test -p <dir>            # audit a specific project
 audit-test -s "s q"            # skip whats in next value "suite + quality"
 ```
 
+### Investigation tools
+
+Beyond the audit itself, four commands for digging into a codebase:
+
+| Command | Answers | Example |
+|---|---|---|
+| [`callgraph`](#cross-file-call-graph) | Who calls this, across files? Where is the bug behind this traceback? | `audit-test callgraph --from-traceback tb.txt` |
+| [`graph`](#dependency-graph) | Which modules import this one, and what does it import? | `audit-test graph cli.py +3 -2` |
+| [`deadcode`](#dead-symbol-triage) | Of the code nothing uses, which parts actually matter? | `audit-test deadcode` |
+| [`bottleneck`](#bottleneck-finder) | What's slow — blocking calls in async code, CPU/memory hot spots? | `audit-test bottle tests` |
+
 ### Quick keys
 
 | Key | Module | Runs |
