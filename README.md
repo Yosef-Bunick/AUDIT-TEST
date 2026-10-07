@@ -364,7 +364,9 @@ audit-test graph cli.py --def main --json     # machine-readable for agents
 
 Same 10 languages (Python via `ast`, the rest via the installed tree-sitter
 grammars). Edges are name-based within one file: `obj.method()` reduces to
-`method`, so cross-file calls and dynamic dispatch aren't resolved.
+`method`, so cross-file calls and dynamic dispatch aren't resolved. For a
+Python call graph that follows calls across files, use
+[`callgraph`](#cross-file-call-graph).
 
 ### Cross-file call graph
 
@@ -394,7 +396,31 @@ functions whose return values flowed into the crashing line (`feeds-crash`):
 the usual culprit has already returned, so it is not on the stack. Candidates
 are scored by distance, being on the stack, feeding the crash, PageRank and
 name overlap with the issue text; test helpers off the stack are pushed down.
-Weights, depth and stopwords live in `[callgraph]` in `audit-code.toml`.
+
+Every setting is optional; override any of them in a `[callgraph]` table in
+the target project's `audit-code.toml`:
+
+| Key | Default | What it does |
+|---|---|---|
+| `depth` | `3` | how many calls to walk from each starting point (`--depth` overrides) |
+| `top` | `10` | how many results to show (`--top` overrides) |
+| `guess_cap` | `5` | with `--guess`, skip a method name defined in more places than this |
+| `w_dist` | `1.0` | weight for closeness to the crash or named symbol |
+| `w_stack` | `0.5` | bonus for being a frame in the traceback |
+| `w_feed` | `1.5` | bonus for producing a value the crashing line used |
+| `feed_hops` | `3` | how many assignments back to trace values into the crashing line |
+| `w_rank` | `0.3` | weight for PageRank (how central the function is) |
+| `w_name` | `0.8` | weight for the function name sharing words with the issue text |
+| `test_penalty` | `1.0` | penalty for test code that isn't on the stack |
+| `issue_seeds` | `10` | with `--issue` alone, how many matching functions to start from |
+| `stopwords` | general filler (`the`, `get`, `self`, …) | words ignored when matching names to the issue |
+
+```toml
+[callgraph]
+depth = 4
+top = 20
+w_name = 1.2
+```
 
 A file that fails to parse, or any unit (module, class, function body) that
 trips an internal resolution fault, is skipped and listed in the summary with
